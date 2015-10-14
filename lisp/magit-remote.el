@@ -193,6 +193,16 @@ If the upstream isn't set, then read the remote branch."
      branch)))
 
 ;;;###autoload
+(defun magit-push-review (branch remote &optional remote-branch args)
+  "Push current HEAD to its upstream branch."
+  (interactive (magit-push-read-args t t))
+  (magit-run-git-async-no-revert
+   "push" "-v" args remote
+   (if remote-branch
+       (format "HEAD:refs/for/%s" remote-branch)
+     branch)))
+
+;;;###autoload
 (defun magit-push-elsewhere (branch remote remote-branch &optional args)
   "Push a branch or commit to some remote branch.
 Read the local and remote branch."
