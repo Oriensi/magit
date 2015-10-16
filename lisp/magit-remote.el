@@ -179,6 +179,7 @@ then read the remote."
               (?Q "Quickly"    magit-push-quickly)
               (?t "Tags"       magit-push-tags)
               (?o "Other"      magit-push)
+              (?r "Review"     magit-push-review)
               (?i "Implicitly" magit-push-implicitly)
               (?T "Tag"        magit-push-tag)
               (?e "Elsewhere"  magit-push-elsewhere)
