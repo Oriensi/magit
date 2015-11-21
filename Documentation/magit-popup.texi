@@ -37,7 +37,7 @@ General Public License for more details.
 @finalout
 @titlepage
 @title Magit-Popup User Manual
-@subtitle for version 2.2
+@subtitle for version 2.3
 @author Jonas Bernoulli
 @page
 @vskip 0pt plus 1filll
@@ -363,18 +363,25 @@ of another command already defined for POPUP, the command is then
 placed before or after AT, depending on PREPEND.
 @end defun
 
+@defun magit-define-popup-sequence-action popup key desc command &optional at prepend
+
+Like @code{magit-define-popup-action}, but modifies the value of the
+@code{:sequence-actions} property instead of @code{:actions}.
+@end defun
+
 @defun magit-change-popup-key popup type from to
 
 In POPUP, bind TO to what FROM was bound to.  TYPE is one of
-@code{:action}, @code{:switch}, or @code{:option}.  Bind TO and unbind FROM, both are
-characters.
+@code{:action}, @code{:sequence-action}, @code{:switch}, or @code{:option}.  Bind TO and unbind
+FROM, both are characters.
 @end defun
 
 @defun magit-remove-popup-key popup type key
 
 In POPUP, remove KEY's binding of TYPE.  POPUP is a popup command
-defined using @code{magit-define-popup}.  TYPE is one of @code{:action}, @code{:switch},
-or @code{:option}.  KEY is the character which is to be unbound.
+defined using @code{magit-define-popup}.  TYPE is one of @code{:action},
+@code{:sequence-action}, @code{:switch}, or @code{:option}.  KEY is the character which
+is to be unbound.
 @end defun
 
 It is also possible to change other aspects of a popup by setting a
@@ -426,7 +433,7 @@ directly invoke the popup's default action.
 
 Ignore prefix arguments.
 @end itemize
-This option can be overriden for individual popups.
+This option can be overridden for individual popups.
 @code{magit-show-refs-popup} for example defaults to invoking the default
 action directly.  It only shows the popup buffer when a prefix
 argument is used.  See @ref{Customizing existing popups,Customizing existing popups}.
@@ -617,20 +624,11 @@ by default) and options with there default values, as in
 
 
 @item
-@code{:man-page}
-
-The name of the manpage to be displayed when the user requests
-help for an argument.
-@end itemize
-When MODE is @code{magit-popup-sequence-mode}, then the following keywords
-are also meaningful:
-
-@itemize
-@item
 @code{:sequence-predicate}
 
 When this function returns non-nil, then the popup uses
-@code{:sequence-actions} instead of @code{:actions}.
+@code{:sequence-actions} instead of @code{:actions}, and does not show the
+@code{:switches} and @code{:options}.
 
 
 @item
@@ -638,6 +636,29 @@ When this function returns non-nil, then the popup uses
 
 The actions which can be invoked from the popup, when
 @code{:sequence-predicate} returns non-nil.
+
+
+@item
+@code{:setup-function}
+
+When this function is specified, then it is used instead of
+@code{magit-popup-default-setup}.
+
+
+@item
+@code{:refresh-function}
+
+When this function is specified, then it is used instead of
+calling @code{magit-popup-insert-section} three times with symbols
+@code{magit-popup-switch-button}, @code{magit-popup-option-button}, and finally
+@code{magit-popup-action-button} as argument.
+
+
+@item
+@code{:man-page}
+
+The name of the manpage to be displayed when the user requests
+help for an argument.
 @end itemize
 @end defmac
 

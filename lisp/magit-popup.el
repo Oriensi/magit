@@ -12,7 +12,7 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
-;; Package-Requires: ((emacs "24.4") (async "20150812") (dash "2.11.0"))
+;; Package-Requires: ((emacs "24.4") (async "20150909.2257") (dash "20151021.113"))
 ;; Keywords: bindings
 ;; Homepage: https://github.com/magit/magit
 
@@ -402,9 +402,10 @@ Optional argument GROUP specifies the Custom group in which the
 option is placed.  If ommitted then the option is placed in some
 group the same way it is done when directly using `defcustom'.
 
-Optional argument MODE specifies the mode used by the popup
-buffer.  If it is ommitted or nil then `magit-popup-mode' is
-used.
+Optional argument MODE is deprecated, instead use the keyword
+arguments `:setup-function' and/or `:refresh-function'.  If MODE
+is non-nil, then it specifies the mode used by the popup buffer,
+instead of the default, which is `magit-popup-mode'.
 
 The remaining arguments should have the form
 
@@ -426,11 +427,10 @@ usually specified in that order):
   `SHORTNAME-arguments'.  This is usually done by calling the
   function `SHORTNAME-arguments'.
 
-  Members of VALUE may also be strings may, assuming the first
-  member is also a string.  Instead of just one action section
-  with the heading \"Actions\", multiple sections are then
-  inserted into the popup buffer, using these strings as
-  headings.
+  Members of VALUE may also be strings, assuming the first member
+  is also a string.  Instead of just one action section with the
+  heading \"Actions\", multiple sections are then inserted into
+  the popup buffer, using these strings as headings.
 
   Members of VALUE may also be nil.  This should only be used
   together with `:max-action-columns' and allows having gaps in
@@ -470,23 +470,30 @@ usually specified in that order):
   enabled by default) and options with there default values, as
   in \"--OPT=OPTVAL\".
 
-`:man-page'
-  The name of the manpage to be displayed when the user requests
-  help for a switch or argument.
-
-When MODE is `magit-popup-sequence-mode', then the following
-keywords are also meaningful:
-
 `:sequence-predicate'
   When this function returns non-nil, then the popup uses
-  `:sequence-actions' instead of `:actions'.
+  `:sequence-actions' instead of `:actions', and does not show
+  the `:switches' and `:options'.
 
 `:sequence-actions'
   The actions which can be invoked from the popup, when
   `:sequence-predicate' returns non-nil.
 
+`:setup-function'
+  When this function is specified, then it is used instead of
+  `magit-popup-default-setup'.
+
+`:refresh-function'
+  When this function is specified, then it is used instead of
+  calling `magit-popup-insert-section' three times with symbols
+  `magit-popup-switch-button', `magit-popup-option-button', and
+  finally `magit-popup-action-button' as argument.
+
+`:man-page'
+  The name of the manpage to be displayed when the user requests
+  help for a switch or argument.
+
 \(fn NAME DOC [GROUP [MODE [OPTION]]] :KEYWORD VALUE...)"
-  ;; TODO document keywords
   (declare (indent defun) (doc-string 2))
   (let* ((grp  (unless (keywordp (car args)) (pop args)))
          (mode (unless (keywordp (car args)) (pop args)))
@@ -588,25 +595,34 @@ is then placed before or after AT, depending on PREPEND."
   (magit-define-popup-key popup :actions key
     (list desc command) at prepend))
 
+(defun magit-define-popup-sequence-action
+    (popup key desc command &optional at prepend)
+  "Like `magit-define-popup-action' but for `:sequence-action'."
+  (declare (indent defun))
+  (magit-define-popup-key popup :sequence-actions key
+    (list desc command) at prepend))
+
 (defconst magit-popup-type-plural-alist
   '((:switch . :switches)
     (:option . :options)
-    (:action . :actions)))
+    (:action . :actions)
+    (:sequence-action . :sequence-actions)))
 
 (defun magit-popup-pluralize-type (type)
   (or (cdr (assq type magit-popup-type-plural-alist))
       type))
 
-(defun magit-define-popup-key (popup type key def
-                                     &optional at prepend)
+(defun magit-define-popup-key
+    (popup type key def &optional at prepend)
   "In POPUP, define KEY as an action, switch, or option.
 It's better to use one of the specialized functions
   `magit-define-popup-action',
+  `magit-define-popup-sequence-action',
   `magit-define-popup-switch', or
   `magit-define-popup-option'."
   (declare (indent defun))
   (setq type (magit-popup-pluralize-type type))
-  (if (memq type '(:switches :options :actions))
+  (if (memq type '(:switches :options :actions :sequence-actions))
       (if (boundp popup)
           (let* ((plist (symbol-value popup))
                  (value (plist-get plist type))
@@ -641,8 +657,8 @@ It's better to use one of the specialized functions
 
 (defun magit-change-popup-key (popup type from to)
   "In POPUP, bind TO to what FROM was bound to.
-TYPE is one of `:action', `:switch', or `:option'.
-Bind TO and unbind FROM, both are characters."
+TYPE is one of `:action', `:sequence-action', `:switch', or
+`:option'.  Bind TO and unbind FROM, both are characters."
   (--if-let (assoc from (plist-get (symbol-value popup)
                                    (magit-popup-pluralize-type type)))
       (setcar it to)
@@ -651,8 +667,8 @@ Bind TO and unbind FROM, both are characters."
 (defun magit-remove-popup-key (popup type key)
   "In POPUP, remove KEY's binding of TYPE.
 POPUP is a popup command defined using `magit-define-popup'.
-TYPE is one of `:action', `:switch', or `:option'.
-KEY is the character which is to be unbound."
+TYPE is one of `:action', `:sequence-action', `:switch', or
+`:option'.  KEY is the character which is to be unbound."
   (setq type (magit-popup-pluralize-type type))
   (let* ((plist (symbol-value popup))
          (alist (plist-get plist type))
@@ -897,42 +913,21 @@ restored."
   (setq buffer-read-only t)
   (setq-local scroll-margin 0)
   (setq-local magit-popup-show-common-commands magit-popup-show-common-commands)
-  (add-hook 'magit-popup-setup-hook 'magit-popup-default-setup nil t)
   (hack-dir-local-variables-non-file-buffer))
 
 (put 'magit-popup-mode 'mode-class 'special)
 
-(defvar magit-popup-setup-hook nil "For internal use.")
-
 (defun magit-popup-default-setup (val def)
-  (magit-popup-put :switches (magit-popup-convert-switches
-                              val (plist-get def :switches)))
-  (magit-popup-put :options  (magit-popup-convert-options
-                              val (plist-get def :options)))
-  (magit-popup-put :actions  (magit-popup-convert-actions
-                              val (plist-get def :actions))))
-
-(define-derived-mode magit-popup-sequence-mode magit-popup-mode "MagitPopup"
-  "Major mode for infix argument popups, which are affected by state.
-
-Used for popups that display different actions depending on some
-external state.  Within Magit this is used for sequence commands
-such as rebase.  The function `:sequence-predicate', which takes
-no arguments, is used to determine whether to use the actions
-defined with regular `:actions' or those in `:sequence-actions'.
-When a sequence is in progress the arguments are not available
-in the popup."
-  :mode 'magit-popup
-  (remove-hook 'magit-popup-setup-hook 'magit-popup-default-setup t)
-  (add-hook    'magit-popup-setup-hook
-               (lambda (val def)
-                 (if (funcall (magit-popup-get :sequence-predicate))
-                     (magit-popup-put
-                      :actions (magit-popup-convert-actions
-                                val (magit-popup-get :sequence-actions)))
-                   (magit-popup-default-setup val def)))
-               t t)
-  (hack-dir-local-variables-non-file-buffer))
+  (if (--when-let (magit-popup-get :sequence-predicate)
+        (funcall it))
+      (magit-popup-put :actions (magit-popup-convert-actions
+                                 val (magit-popup-get :sequence-actions)))
+    (magit-popup-put :switches (magit-popup-convert-switches
+                                val (plist-get def :switches)))
+    (magit-popup-put :options (magit-popup-convert-options
+                               val (plist-get def :options)))
+    (magit-popup-put :actions (magit-popup-convert-actions
+                               val (plist-get def :actions)))))
 
 (defun magit-popup-mode-setup (popup mode)
   (let ((val (symbol-value (plist-get (symbol-value popup) :variable)))
@@ -941,7 +936,11 @@ in the popup."
                                       (format "*%s*" popup))
                                      (or mode 'magit-popup-mode))
     (setq magit-this-popup popup)
-    (run-hook-with-args 'magit-popup-setup-hook val def))
+    (if (bound-and-true-p magit-popup-setup-hook) ; obsolete
+        (run-hook-with-args 'magit-popup-setup-hook val def)
+      (funcall (or (magit-popup-get :setup-function)
+                   'magit-popup-default-setup)
+               val def)))
   (magit-refresh-popup-buffer)
   (fit-window-to-buffer nil nil (line-number-at-pos (point-max))))
 
@@ -955,6 +954,7 @@ in the popup."
 
 (defvar magit-refresh-popup-buffer-hook nil
   "Hook run by `magit-refresh-popup-buffer'.
+
 The hook is run right after inserting the representation of the
 popup events but before optionally inserting the representation
 of events shared by all popups and before point is adjusted.")
@@ -966,9 +966,11 @@ of events shared by all popups and before point is adjusted.")
          (event  (and button (button-get button 'event))))
     (erase-buffer)
     (save-excursion
-      (magit-popup-insert-section 'magit-popup-switch-button)
-      (magit-popup-insert-section 'magit-popup-option-button)
-      (magit-popup-insert-section 'magit-popup-action-button)
+      (--if-let (magit-popup-get :refresh-function)
+          (funcall it)
+        (magit-popup-insert-section 'magit-popup-switch-button)
+        (magit-popup-insert-section 'magit-popup-option-button)
+        (magit-popup-insert-section 'magit-popup-action-button))
       (run-hooks 'magit-refresh-popup-buffer-hook)
       (when magit-popup-show-common-commands
         (magit-popup-insert-command-section
@@ -976,12 +978,12 @@ of events shared by all popups and before point is adjusted.")
          magit-popup-common-commands)))
     (set-buffer-modified-p nil)
     (if event
-        (while (and (forward-button 1)
+        (while (and (ignore-errors (forward-button 1))
                     (let ((b (button-at (point))))
                       (or (not (equal (button-get b 'prefix) prefix))
                           (not (equal (button-get b 'event)  event))))))
       (re-search-forward "^Actions" nil t)
-      (forward-button 1))))
+      (ignore-errors (forward-button 1)))))
 
 ;;; Draw
 

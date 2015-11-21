@@ -37,9 +37,21 @@
   :group 'magit-extensions)
 
 (defcustom magit-blame-heading-format "%-20a %C %s"
-  "Format used for blame headings."
+  "Format string used for blame headings.
+
+The following placeholders are recognized:
+
+  %H    hash
+  %s    summary
+  %a    author
+  %A    author time
+  %c    committer
+  %C    committer time
+
+The author and committer time formats can be specified with
+`magit-blame-time-format'."
   :group 'magit-blame
-  :type 'regexp)
+  :type 'string)
 
 (defcustom magit-blame-time-format "%F %H:%M"
   "Format for time strings in blame headings."
@@ -222,7 +234,10 @@ only arguments available from `magit-blame-popup' should be used.
     (if revision
         (magit-find-file revision file)
       (let ((default-directory default-directory))
-        (find-file file)))
+        (--if-let (find-buffer-visiting file)
+            (progn (switch-to-buffer it)
+                   (save-buffer))
+          (find-file file))))
     ;; ^ Make sure this doesn't affect the value used below.  b640c6f
     (widen)
     (when line
@@ -488,7 +503,7 @@ then also kill the buffer."
       (run-with-idle-timer
        magit-update-other-window-delay nil
        (lambda ()
-         (cl-destructuring-bind (rev buf) magit--update-revision-buffer
+         (-let [(rev buf) magit--update-revision-buffer]
            (setq magit--update-revision-buffer nil)
            (when (buffer-live-p buf)
              (let ((magit-display-buffer-noselect t))

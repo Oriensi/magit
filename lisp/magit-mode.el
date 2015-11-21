@@ -115,17 +115,23 @@ The following %-sequences are supported:
 
 `%M' Like \"%m\" but abbreviate `magit-status-mode' as `magit'.
 
+`%v' The value the buffer is locked to, in parentheses, or an empty
+     string if the buffer is not locked to a value.
+
+`%V' Like \"%v\", but the string is prefixed with a space, unless it
+     is an empty string.
+
 `%t' The top-level directory of the working tree of the
-     repository, or if `magit-uniquify-buffer-name' is non-nil
+     repository, or if `magit-uniquify-buffer-names' is non-nil
      an abbreviation of that.
 
 The value should always contain either \"%m\" or \"%M\" as well as
-\"%t\".  If `magit-uniquify-buffer-name' is non-nil, then the
+\"%t\".  If `magit-uniquify-buffer-names' is non-nil, then the
 value must end with \"%t\".
 
 This is used by `magit-generate-buffer-name-default-function'.
 If another `magit-generate-buffer-name-function' is used, then
-it may not be respected this option, or on the contrary it may
+it may not respect this option, or on the contrary it may
 support additional %-sequences."
   :package-version '(magit . "2.3.0")
   :group 'magit-modes
@@ -178,7 +184,7 @@ displayed.  Otherwise fall back to regular region highlighting."
   (setq magit-revert-buffers-timer
         (and (boundp 'magit-revert-buffers)
              (numberp magit-revert-buffers)
-             (run-with-timer 0 magit-revert-buffers
+             (run-with-timer 0 (abs magit-revert-buffers)
                              'magit-revert-buffers-async))))
 
 (defcustom magit-revert-buffers 'usage
@@ -202,15 +208,16 @@ the current repository may optionally be reverted.
           what is right for them.
 
 `silent'  Revert the buffers synchronously and be quiet about it.
-          This is the recommended setting, because for the other
-          values the revert messages might prevent you from
-          seeing other, more important, messages in the echo
-          area.
+          This (or a negative number) is the recommended setting,
+          because for the other values the revert messages might
+          prevent you from seeing other, more important, messages
+          in the echo area.
 
-NUMBER    An integer or float.  Revert the buffers asynchronously,
-          mentioning each one as it is being reverted.  If user
-          input arrives, then stop reverting.  After NUMBER
-          seconds resume reverting."
+NUMBER    An integer or float.  Revert the buffers asynchronously.
+          If NUMBER is positive, then mention each buffer as it is
+          being reverted.  If it is negative, then be quiet about
+          it.  If user input arrives, then stop reverting.  After
+          (the absolute value of) NUMBER seconds resume reverting."
   :package-version '(magit . "2.1.0")
   :group 'magit
   :type '(choice
@@ -664,8 +671,13 @@ latter is displayed in its place."
                                     magit-stashes-mode))
                  (car magit-refresh-args))
                 ((eq major-mode 'magit-diff-mode)
-                 (append (or (car magit-refresh-args) '(unstaged))
-                         (cadr magit-refresh-args)))))
+                 (let ((rev  (nth 0 magit-refresh-args))
+                       (args (nth 1 magit-refresh-args)))
+                   (cond
+                    ((member "--no-index" args)
+                     (nth 3 magit-refresh-args))
+                    (rev (if args (cons rev args) rev))
+                    (t   (if (member "--cached" args) "staged" "unstaged")))))))
     (if magit-buffer-locked-p
         (rename-buffer (funcall magit-generate-buffer-name-function
                                 major-mode magit-buffer-locked-p))
@@ -822,6 +834,8 @@ When called interactively then the revert is forced."
                   (--filter
                    (let ((file (buffer-file-name it)))
                      (and file
+                          (equal (file-remote-p file)
+                                 (file-remote-p topdir))
                           (file-in-directory-p file topdir)
                           (member (file-relative-name file topdir) tracked)))
                    (buffer-list))
@@ -883,7 +897,9 @@ When called interactively then the revert is forced."
               (progn (message "Reverting %s inhibited due to magit-blame-mode"
                               buffer-file-name)
                      (run-hooks 'magit-not-reverted-hook))
-            (if (eq magit-revert-buffers 'silent)
+            (if (or (eq magit-revert-buffers 'silent)
+                    (and (numberp magit-revert-buffers)
+                         (< magit-revert-buffers 0)))
                 (revert-buffer 'ignore-auto t t)
               (message "Reverting buffer `%s'..." (buffer-name))
               (revert-buffer 'ignore-auto t t)
