@@ -370,10 +370,10 @@ removed after restarting Emacs."
                  magit-push-current-to-pushremote)
              (?u magit--push-current-to-upstream-desc
                  magit-push-current-to-upstream)
+             (?r "for review"        magit-push-review)
              (?e "elsewhere\n"       magit-push-current)
              "Push"
              (?o "another branch"    magit-push)
-             (?r "for review"        magit-push-review)
              (?T "a tag"             magit-push-tag)
              (?m "matching branches" magit-push-matching)
              (?t "all tags"          magit-push-tags))
@@ -448,9 +448,20 @@ upstream can be changed before pushed to it."
     (user-error "No branch is checked out")))
 
 ;;;###autoload
-(defun magit-push-review (target args)
+(defun magit-push-review (args &optional upstream)
   "Push current HEAD to its upstream branch."
-  (magit-git-push "HEAD" target args))
+    (interactive
+   (list (magit-push-arguments)
+         (and (magit--push-current-set-upstream-p current-prefix-arg)
+              (magit-read-upstream-branch))))
+  (--if-let (magit-get-current-branch)
+      (progn
+        (when upstream
+          (magit-set-branch*merge/remote it upstream))
+        (-if-let (target (magit-get-upstream-branch it))
+            (magit-git-push "HEAD" target args)
+          (user-error "No upstream is configured for %s" it)))
+    (user-error "No branch is checked out")))
 
 (defun magit--push-current-set-upstream-p (&optional change)
   (and (or change
