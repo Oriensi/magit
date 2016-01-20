@@ -386,6 +386,13 @@ removed after restarting Emacs."
     (magit-run-git-async "push" "-v" args remote
                          (format "%s:refs/heads/%s" branch target))))
 
+(defun magit-git-push-review (target args)
+  (run-hooks 'magit-credential-hook)
+  (-let [(remote . target)
+         (magit-split-branch-name target)]
+    (magit-run-git-async "push" "-v" args remote
+                         (format "HEAD:refs/for/%s" target))))
+
 ;;;###autoload
 (defun magit-push-current-to-pushremote (args &optional push-remote)
   "Push the current branch to `branch.<name>.pushRemote'.
@@ -459,7 +466,7 @@ upstream can be changed before pushed to it."
         (when upstream
           (magit-set-branch*merge/remote it upstream))
         (-if-let (target (magit-get-upstream-branch it))
-            (magit-git-push "HEAD" target args)
+            (magit-git-push-review target args)
           (user-error "No upstream is configured for %s" it)))
     (user-error "No branch is checked out")))
 
