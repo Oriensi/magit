@@ -1,6 +1,6 @@
-;;; magit-stash.el --- stash support for Magit
+;;; magit-stash.el --- stash support for Magit  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2008-2015  The Magit Project Contributors
+;; Copyright (C) 2008-2016  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -292,7 +292,8 @@ When the region is active offer to drop all contained stashes."
     map)
   "Keymap for `stash' sections.")
 
-(magit-define-section-jumper stashes "Stashes" "refs/stash")
+(magit-define-section-jumper magit-jump-to-stashes
+  "Stashes" stashes "refs/stash")
 
 (cl-defun magit-insert-stashes (&optional (ref   "refs/stash")
                                           (heading "Stashes:"))
@@ -353,7 +354,7 @@ instead of \"Stashes:\"."
   :group 'magit-diff
   (hack-dir-local-variables-non-file-buffer))
 
-(defun magit-stash-refresh-buffer (stash _const args files)
+(defun magit-stash-refresh-buffer (stash _const _args _files)
   (setq header-line-format
         (concat
          "\s" (propertize (capitalize stash) 'face 'magit-section-heading)
@@ -365,7 +366,9 @@ instead of \"Stashes:\"."
   (magit-insert-section (commit commit)
     (magit-insert-heading message)
     (magit-git-wash #'magit-diff-wash-diffs
-      "diff" (cdr magit-refresh-args) "--no-prefix" "-u" range "--" files)))
+      "diff" range "-p" "--no-prefix"
+      (nth 2 magit-refresh-args)
+      "--" (or files (nth 3 magit-refresh-args)))))
 
 (defun magit-insert-stash-index ()
   "Insert section showing the index commit of the stash."

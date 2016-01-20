@@ -15,7 +15,7 @@ suffix commands.
 @end ifnottex
 
 @quotation
-Copyright (C) 2015 Jonas Bernoulli <jonas@@bernoul.li>
+Copyright (C) 2015-2016 Jonas Bernoulli <jonas@@bernoul.li>
 
 You can redistribute this document and/or modify it under the terms
 of the GNU General Public License as published by the Free Software
@@ -37,7 +37,7 @@ General Public License for more details.
 @finalout
 @titlepage
 @title Magit-Popup User Manual
-@subtitle for version 2.3
+@subtitle for version 2.4
 @author Jonas Bernoulli
 @page
 @vskip 0pt plus 1filll
@@ -466,6 +466,14 @@ argument is used.  See @ref{Customizing existing popups,Customizing existing pop
 The Emacs package used to display man-pages, one of @code{man} or @code{woman}.
 @end defopt
 
+@defopt magit-popup-display-buffer-action
+
+The option controls how the window used to display a popup buffer is
+created.  Popup buffers are displayed using @code{display-buffer} with the
+value of this option as ACTION argument.  You can also set this to
+nil and instead add an entry to @code{display-buffer-alist}.
+@end defopt
+
 To emphasize the default action by making it bold use this:
 
 @lisp
@@ -501,19 +509,19 @@ infix arguments, and then also one of its suffix commands.
   'magit-commands
   :man-page "git-tag"
   :switches '((?a "Annotate" "--annotate")
-              (?s "Sign"     "--sign")
-              (?f "Force"    "--force"))
+	      (?s "Sign"     "--sign")
+	      (?f "Force"    "--force"))
   :actions  '((?t "Create"   magit-tag)
-              (?k "Delete"   magit-tag-delete)
-              (?p "Prune"    magit-tag-prune))
+	      (?k "Delete"   magit-tag-delete)
+	      (?p "Prune"    magit-tag-prune))
   :default-action 'magit-tag)
 
 ;;;###autoload
 (defun magit-tag (name rev &optional args)
   "Create a new tag with the given NAME at REV."
   (interactive (list (magit-read-tag "Tag name")
-                     (magit-read-branch-or-commit "Place tag on")
-                     (magit-tag-arguments)))
+		     (magit-read-branch-or-commit "Place tag on")
+		     (magit-tag-arguments)))
   (magit-run-git-with-editor "tag" args name rev))
 @end lisp
 
