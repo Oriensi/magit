@@ -77,7 +77,7 @@ Applying the resulting stash has the inverse effect."
 
 ;;;###autoload
 (defun magit-stash-worktree (message &optional include-untracked)
-  "Create a stash of the working tree only.
+  "Create a stash of unstaged changes in the working tree.
 Untracked files are included according to popup arguments.
 One prefix argument is equivalent to `--include-untracked'
 while two prefix arguments are equivalent to `--all'."
@@ -129,7 +129,7 @@ Unstaged and untracked changes are not stashed."
 
 ;;;###autoload
 (defun magit-snapshot-worktree (&optional include-untracked)
-  "Create a snapshot of the working tree only.
+  "Create a snapshot of unstaged changes in the working tree.
 Untracked files are included according to popup arguments.
 One prefix argument is equivalent to `--include-untracked'
 while two prefix arguments are equivalent to `--all'."
@@ -222,10 +222,10 @@ When the region is active offer to drop all contained stashes."
         (if (eq keep 'worktree)
             (with-temp-buffer
               (magit-git-insert "diff" "--cached")
-              (magit-run-git-with-input nil
-                "apply" "--reverse" "--cached" "--ignore-space-change" "-")
-              (magit-run-git-with-input nil
-                "apply" "--reverse" "--ignore-space-change" "-"))
+              (magit-run-git-with-input
+               "apply" "--reverse" "--cached" "--ignore-space-change" "-")
+              (magit-run-git-with-input
+               "apply" "--reverse" "--ignore-space-change" "-"))
           (unless (eq keep t)
             (if (eq keep 'index)
                 (magit-call-git "checkout" "--" ".")
@@ -240,10 +240,7 @@ When the region is active offer to drop all contained stashes."
                                                 (t "local"))))))
 
 (defun magit-stash-store (message ref commit)
-  (magit-reflog-enable ref t)
-  (unless (magit-git-success "update-ref" "-m" message ref commit
-                             (or (magit-rev-verify ref) ""))
-    (error "Cannot update %s with %s" ref commit)))
+  (magit-update-ref ref message commit t))
 
 (defun magit-stash-create (message index worktree untracked)
   (unless (magit-rev-parse "--verify" "HEAD")
@@ -371,18 +368,18 @@ instead of \"Stashes:\"."
       "--" (or files (nth 3 magit-refresh-args)))))
 
 (defun magit-insert-stash-index ()
-  "Insert section showing the index commit of the stash."
+  "Insert section showing staged changes of the stash."
   (let ((stash (car magit-refresh-args)))
     (magit-stash-insert-section (format "%s^2" stash)
                                 (format "%s^..%s^2" stash stash)
-                                "Index")))
+                                "Staged")))
 
 (defun magit-insert-stash-worktree ()
-  "Insert section showing the worktree commit of the stash."
+  "Insert section showing unstaged changes of the stash."
   (let ((stash (car magit-refresh-args)))
     (magit-stash-insert-section stash
                                 (format "%s^2..%s" stash stash)
-                                "Working tree")))
+                                "Unstaged")))
 
 (defun magit-insert-stash-untracked ()
   "Insert section showing the untracked files commit of the stash."
@@ -393,7 +390,7 @@ instead of \"Stashes:\"."
                                   (format "%s^..%s^3" stash stash)
                                   "Untracked files"
                                   (magit-git-items "ls-tree" "-z" "--name-only"
-                                                   "--full-tree" rev)))))
+                                                   "-r" "--full-tree" rev)))))
 
 ;;; magit-stash.el ends soon
 (provide 'magit-stash)
