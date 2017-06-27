@@ -1,6 +1,6 @@
 ;;; magit-remote.el --- transfer Git commits  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2008-2016  The Magit Project Contributors
+;; Copyright (C) 2008-2017  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -58,12 +58,11 @@ Then show the status buffer for the new repository."
    (let  ((url (magit-read-string-ns "Clone repository")))
      (list url (read-directory-name
                 "Clone to: " nil nil nil
-                (and (string-match "\\([^./]+\\)\\(\\.git\\)?$" url)
+                (and (string-match "\\([^/:]+?\\)\\(/?\\.git\\)?$" url)
                      (match-string 1 url))))))
   (setq directory (file-name-as-directory (expand-file-name directory)))
   (magit-run-git-async "clone" repository
-                       ;; Stop cygwin git making a "c:" directory.
-                       (magit-convert-git-filename directory))
+                       (magit-convert-filename-for-git directory))
   ;; Don't refresh the buffer we're calling from.
   (process-put magit-this-process 'inhibit-refresh t)
   (set-process-sentinel
@@ -78,7 +77,7 @@ Then show the status buffer for the new repository."
          (when (or (eq  magit-clone-set-remote.pushDefault t)
                    (and magit-clone-set-remote.pushDefault
                         (y-or-n-p "Set `remote.pushDefault' to \"origin\"? ")))
-           (magit-call-git "config" "remote.pushDefault" "origin"))
+           (setf (magit-get "remote.pushDefault") "origin"))
          (unless magit-clone-set-remote-head
            (magit-remote-unset-head "origin")))
        (with-current-buffer (process-get process 'command-buf)
@@ -91,9 +90,9 @@ Then show the status buffer for the new repository."
 
 If `ask', then always ask.  If `ask-if-unset', then ask, but only
 if the variable isn't set already.  If nil, then don't ever set.
-If the value is a string, then set without asking, provided the
-name of the name of the added remote is equal to that string and
-the variable isn't already set."
+If the value is a string, then set without asking, provided that
+the name of the added remote is equal to that string and the
+variable isn't already set."
   :package-version '(magit . "2.4.0")
   :group 'magit-commands
   :type '(choice (const  :tag "ask if unset" ask-if-unset)
@@ -104,8 +103,10 @@ the variable isn't already set."
 ;;;###autoload (autoload 'magit-remote-popup "magit-remote" nil t)
 (magit-define-popup magit-remote-popup
   "Popup console for remote commands."
-  'magit-commands nil nil
   :man-page "git-remote"
+  :default-arguments '("-f")
+  :switches '("Switches for add"
+              (?f "Fetch after add" "-f"))
   :actions  '((?a "Add"     magit-remote-add)
               (?r "Rename"  magit-remote-rename)
               (?k "Remove"  magit-remote-remove)
@@ -118,19 +119,20 @@ the variable isn't already set."
       url)))
 
 ;;;###autoload
-(defun magit-remote-add (remote url)
+(defun magit-remote-add (remote url &optional args)
   "Add a remote named REMOTE and fetch it."
   (interactive (list (magit-read-string-ns "Remote name")
-                     (magit-read-url "Remote url")))
+                     (magit-read-url "Remote url")
+                     (magit-remote-arguments)))
   (if (pcase (list magit-remote-add-set-remote.pushDefault
-                   (magit-get "remote.defaultPush"))
+                   (magit-get "remote.pushDefault"))
         (`(,(pred stringp) ,_) t)
         ((or `(ask ,_) `(ask-if-unset nil))
          (y-or-n-p (format "Set `remote.pushDefault' to \"%s\"? " remote))))
-      (progn (magit-call-git "remote" "add" "-f" remote url)
-             (magit-call-git "config" "remote.pushDefault" remote)
+      (progn (magit-call-git "remote" "add" args remote url)
+             (setf (magit-get "remote.pushDefault") remote)
              (magit-refresh))
-    (magit-run-git-async "remote" "add" "-f" remote url)))
+    (magit-run-git-async "remote" "add" args remote url)))
 
 ;;;###autoload
 (defun magit-remote-rename (old new)
@@ -183,7 +185,6 @@ Delete the symbolic-ref \"refs/remotes/<remote>/HEAD\"."
 ;;;###autoload (autoload 'magit-fetch-popup "magit-remote" nil t)
 (magit-define-popup magit-fetch-popup
   "Popup console for fetch commands."
-  'magit-commands
   :man-page "git-fetch"
   :switches '((?p "Prune deleted branches" "--prune"))
   :actions  '("Configure"
@@ -279,7 +280,6 @@ removed on the respective remote."
 ;;;###autoload (autoload 'magit-pull-popup "magit-remote" nil t)
 (magit-define-popup magit-pull-popup
   "Popup console for pull commands."
-  'magit-commands
   :man-page "git-pull"
   :variables '("Configure"
                (?r "branch.%s.rebase"
@@ -325,7 +325,6 @@ missing.  To add them use something like:
     (magit-define-popup-action \\='magit-pull-and-fetch-popup ?P
       \\='magit-get-push-branch
       \\='magit-fetch-from-push-remote ?F))"
-  'magit-commands
   :man-page "git-pull"
   :variables '("Configure"
                (?r "branch.%s.rebase"
@@ -424,11 +423,11 @@ removed after restarting Emacs."
 ;;;###autoload (autoload 'magit-push-popup "magit-remote" nil t)
 (magit-define-popup magit-push-popup
   "Popup console for push commands."
-  'magit-commands
   :man-page "git-push"
-  :switches `((?f "Force"         "--force-with-lease")
-              (?h "Disable hooks" "--no-verify")
-              (?d "Dry run"       "--dry-run")
+  :switches `((?f "Force with lease" "--force-with-lease")
+              (?F "Force"            "--force")
+              (?h "Disable hooks"    "--no-verify")
+              (?d "Dry run"          "--dry-run")
               ,@(and (not magit-push-current-set-remote-if-missing)
                      '((?u "Set upstream"  "--set-upstream"))))
   :actions '("Configure"
@@ -485,13 +484,12 @@ the push-remote can be changed before pushed to it."
                          (magit-get-current-branch)))))))
   (--if-let (magit-get-current-branch)
       (progn (when push-remote
-               (magit-call-git
-                "config"
-                (if (eq magit-push-current-set-remote-if-missing 'default)
-                    "remote.pushDefault"
-                  (format "branch.%s.pushRemote"
-                          (magit-get-current-branch)))
-                push-remote))
+               (setf (magit-get
+                      (if (eq magit-push-current-set-remote-if-missing 'default)
+                          "remote.pushDefault"
+                        (format "branch.%s.pushRemote"
+                                (magit-get-current-branch))))
+                     push-remote))
              (-if-let (remote (magit-get-push-remote it))
                  (if (member remote (magit-list-remotes))
                      (magit-git-push it (concat remote "/" it) args)
@@ -584,9 +582,15 @@ Both the source and the target are read in the minibuffer."
   (interactive
    (let ((source (magit-read-local-branch-or-commit "Push")))
      (list source
-           (magit-read-remote-branch (format "Push %s to" source) nil
-                                     (magit-get-upstream-branch source)
-                                     source 'confirm)
+           (magit-read-remote-branch
+            (format "Push %s to" source) nil
+            (if (magit-local-branch-p source)
+                (or (magit-get-push-branch source)
+                    (magit-get-upstream-branch source))
+              (and (magit-rev-ancestor-p source "HEAD")
+                   (or (magit-get-push-branch)
+                       (magit-get-upstream-branch))))
+            source 'confirm)
            (magit-push-arguments))))
   (magit-git-push source target args))
 
@@ -599,9 +603,10 @@ only available for the part before the colon, or when no colon
 is used."
   (interactive
    (list (magit-read-remote "Push to remote")
-         (completing-read-multiple
-          "Push refspec,s: "
-          (cons "HEAD" (magit-list-local-branch-names)))
+         (split-string (magit-completing-read-multiple
+                        "Push refspec,s"
+                        (cons "HEAD" (magit-list-local-branch-names)))
+                       crm-default-separator t)
          (magit-push-arguments)))
   (run-hooks 'magit-credential-hook)
   (magit-run-git-async "push" "-v" args remote refspecs))
@@ -652,11 +657,11 @@ To add this command to the push popup add this to your init file:
 
   (with-eval-after-load \\='magit-remote
     (magit-define-popup-action \\='magit-push-popup ?P
-      'magit-push-implicitly--desc
-      'magit-push-implicitly ?p t))
+      \\='magit-push-implicitly--desc
+      \\='magit-push-implicitly ?p t))
 
 The function `magit-push-implicitly--desc' attempts to predict
-what this command will do, the value it returns is displayed in
+what this command will do.  The value it returns is displayed in
 the popup buffer."
   (interactive (list (magit-push-arguments)))
   (run-hooks 'magit-credential-hook)
@@ -705,8 +710,8 @@ To add this command to the push popup add this to your init file:
 
   (with-eval-after-load \\='magit-remote
     (magit-define-popup-action \\='magit-push-popup ?r
-      'magit-push-to-remote--desc
-      'magit-push-to-remote ?p t))"
+      \\='magit-push-to-remote--desc
+      \\='magit-push-to-remote ?p t))"
   (interactive (list (magit-read-remote "Push to remote")
                      (magit-push-arguments)))
   (run-hooks 'magit-credential-hook)
@@ -720,7 +725,6 @@ To add this command to the push popup add this to your init file:
 ;;;###autoload (autoload 'magit-patch-popup "magit-remote" nil t)
 (magit-define-popup magit-patch-popup
   "Popup console for patch commands."
-  'magit-commands
   :man-page "git-format-patch"
   :switches '("Switches for formatting patches"
               (?l "Add cover letter" "--cover-letter"))
@@ -747,7 +751,7 @@ To add this command to the push popup add this to your init file:
 When a single commit is given for RANGE, create a patch for the
 changes introduced by that commit (unlike 'git format-patch'
 which creates patches for all commits that are reachable from
-HEAD but not from the specified commit)."
+`HEAD' but not from the specified commit)."
   (interactive
    (list (-if-let (revs (magit-region-values 'commit))
              (concat (car (last revs)) "^.." (car revs))
@@ -787,9 +791,5 @@ is asked to pull.  START has to be reachable from that commit."
   (magit-git-insert "request-pull" start url end)
   (set-buffer-modified-p nil))
 
-;;; magit-remote.el ends soon
 (provide 'magit-remote)
-;; Local Variables:
-;; indent-tabs-mode: nil
-;; End:
 ;;; magit-remote.el ends here
