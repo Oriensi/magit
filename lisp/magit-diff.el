@@ -415,22 +415,36 @@ and `:slant'."
   :group 'magit-faces)
 
 (defface magit-diff-added
-  '((((class color) (background light))
-     :background "#ddffdd"
-     :foreground "#22aa22")
-    (((class color) (background dark))
-     :background "#335533"
-     :foreground "#ddffdd"))
+  (if window-system
+      '((((class color) (background light))
+         :background "#ddffdd"
+         :foreground "#22aa22")
+        (((class color) (background dark))
+         :background "#335533"
+         :foreground "#ddffdd"))
+    '((((class color) (background light))
+       :background "#ddffdd"
+       :foreground "coral")
+      (((class color) (background dark))
+       :background "#335533"
+       :foreground "coral")))
   "Face for lines in a diff that have been added."
   :group 'magit-faces)
 
 (defface magit-diff-removed
- '((((class color) (background light))
-    :background "#ffdddd"
-    :foreground "#aa2222")
-   (((class color) (background dark))
-    :background "#553333"
-    :foreground "#ffdddd"))
+  (if window-system
+      '((((class color) (background light))
+         :background "#ffdddd"
+         :foreground "#aa2222")
+        (((class color) (background dark))
+         :background "#553333"
+         :foreground "#ffdddd"))
+    '((((class color) (background light))
+       :background "#ffdddd"
+       :foreground "DeepSkyBlue1")
+      (((class color) (background dark))
+       :background "#553333"
+       :foreground "DeepSkyBlue1")))
   "Face for lines in a diff that have been removed."
   :group 'magit-faces)
 
@@ -461,22 +475,36 @@ and `:slant'."
   :group 'magit-faces)
 
 (defface magit-diff-added-highlight
-  '((((class color) (background light))
-     :background "#cceecc"
-     :foreground "#22aa22")
-    (((class color) (background dark))
-     :background "#336633"
-     :foreground "#cceecc"))
+  (if window-system
+      '((((class color) (background light))
+         :background "#cceecc"
+         :foreground "#22aa22")
+        (((class color) (background dark))
+         :background "#336633"
+         :foreground "#cceecc"))
+    '((((class color) (background light))
+       :background "#cceecc"
+       :foreground "orange")
+      (((class color) (background dark))
+       :background "#336633"
+       :foreground "orange")))
   "Face for lines in a diff that have been added."
   :group 'magit-faces)
 
 (defface magit-diff-removed-highlight
-  '((((class color) (background light))
-     :background "#eecccc"
-     :foreground "#aa2222")
-    (((class color) (background dark))
-     :background "#663333"
-     :foreground "#eecccc"))
+  (if window-system
+      '((((class color) (background light))
+         :background "#eecccc"
+         :foreground "#aa2222")
+        (((class color) (background dark))
+         :background "#663333"
+         :foreground "#eecccc"))
+    '((((class color) (background light))
+       :background "#eecccc"
+       :foreground "#1e90ff")
+      (((class color) (background dark))
+       :background "#663333"
+       :foreground "#1e90ff")))
   "Face for lines in a diff that have been removed."
   :group 'magit-faces)
 
