@@ -1,6 +1,6 @@
 ;;; git-rebase.el --- Edit Git rebase files  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2017  The Magit Project Contributors
+;; Copyright (C) 2010-2018  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -474,7 +474,9 @@ running 'man git-rebase' at the command line) for details."
   (unless git-rebase-show-instructions
     (let ((inhibit-read-only t))
       (flush-lines git-rebase-comment-re)))
-  (with-editor-mode 1)
+  (unless with-editor-mode
+    ;; Maybe already enabled when using `shell-command' or an Emacs shell.
+    (with-editor-mode 1))
   (when git-rebase-confirm-cancel
     (add-hook 'with-editor-cancel-query-functions
               'git-rebase-cancel-confirm nil t))
@@ -535,15 +537,17 @@ By default, this is the same except for the \"pick\" command."
       (goto-char (point-min))
       (when (and git-rebase-show-instructions
                  (re-search-forward
-                  (concat git-rebase-comment-re " Commands:\n")
+                  (concat git-rebase-comment-re " p, pick")
                   nil t))
+        (goto-char (line-beginning-position))
         (--each git-rebase-command-descriptions
           (insert (format "%s %-8s %s\n"
                           comment-start
                           (substitute-command-keys (format "\\[%s]" (car it)))
                           (cdr it))))
         (while (re-search-forward (concat git-rebase-comment-re
-                                          "\\(  ?\\)\\([^,],\\) \\([^ ]+\\) = ")
+                                          "\\(  ?\\)\\([^\n,],\\) "
+                                          "\\([^\n ]+\\) ")
                                   nil t)
           (let ((cmd (intern (concat "git-rebase-" (match-string 3)))))
             (if (not (fboundp cmd))

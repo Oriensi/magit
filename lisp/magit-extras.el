@@ -1,6 +1,6 @@
 ;;; magit-extras.el --- additional functionality for Magit  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2008-2017  The Magit Project Contributors
+;; Copyright (C) 2008-2018  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -51,7 +51,7 @@
   "Run `git gui' for the current git repository."
   (interactive)
   (magit-with-toplevel
-    (call-process magit-git-executable nil 0 nil "gui")))
+    (magit-process-file magit-git-executable nil 0 nil "gui")))
 
 ;;;###autoload
 (defun magit-run-git-gui-blame (commit filename &optional linenum)
@@ -73,7 +73,7 @@ blame to center around the line point is on."
                          (magit-file-relative-name buffer-file-name)))
                 (line-number-at-pos)))))
   (magit-with-toplevel
-    (apply #'call-process magit-git-executable nil 0 nil "gui" "blame"
+    (apply #'magit-process-file magit-git-executable nil 0 nil "gui" "blame"
            `(,@(and linenum (list (format "--line=%d" linenum)))
              ,commit
              ,filename))))
@@ -82,19 +82,19 @@ blame to center around the line point is on."
 (defun magit-run-gitk ()
   "Run `gitk' in the current repository."
   (interactive)
-  (call-process magit-gitk-executable nil 0))
+  (magit-process-file magit-gitk-executable nil 0))
 
 ;;;###autoload
 (defun magit-run-gitk-branches ()
   "Run `gitk --branches' in the current repository."
   (interactive)
-  (call-process magit-gitk-executable nil 0 nil "--branches"))
+  (magit-process-file magit-gitk-executable nil 0 nil "--branches"))
 
 ;;;###autoload
 (defun magit-run-gitk-all ()
   "Run `gitk --all' in the current repository."
   (interactive)
-  (call-process magit-gitk-executable nil 0 nil "--all"))
+  (magit-process-file magit-gitk-executable nil 0 nil "--all"))
 
 ;;; Emacs Tools
 
@@ -134,6 +134,28 @@ is no file at point, then instead visit `default-directory'."
                              (concat default-directory "/."))))
 
 ;;;###autoload
+(defun magit-dired-log (&optional follow)
+  "Show log for all marked files, or the current file."
+  (interactive "P")
+  (-if-let (topdir (magit-toplevel default-directory))
+      (let ((args (car (magit-log-arguments)))
+            (files (dired-get-marked-files nil nil #'magit-file-tracked-p)))
+        (unless files
+          (user-error "No marked file is being tracked by Git"))
+        (when (and follow
+                   (not (member "--follow" args))
+                   (not (cdr files)))
+          (push "--follow" args))
+        (magit-mode-setup-internal
+         #'magit-log-mode
+         (list (list (or (magit-get-current-branch) "HEAD"))
+               args
+               (let ((default-directory topdir))
+                 (mapcar #'file-relative-name files)))
+         magit-log-buffer-file-locked))
+    (magit--not-inside-repository-error)))
+
+;;;###autoload
 (defun magit-do-async-shell-command (file)
   "Open FILE with `dired-do-async-shell-command'.
 Interactively, open the file at point."
@@ -144,6 +166,59 @@ Interactively, open the file at point."
   (dired-do-async-shell-command
    (dired-read-shell-command "& on %s: " current-prefix-arg (list file))
    nil (list file)))
+
+;;; Shift Selection
+
+(defun magit--turn-on-shift-select-mode-p ()
+  (and shift-select-mode
+       this-command-keys-shift-translated
+       (not mark-active)
+       (not (eq (car-safe transient-mark-mode) 'only))))
+
+;;;###autoload
+(defun magit-previous-line (&optional arg try-vscroll)
+  "Like `previous-line' but with Magit-specific shift-selection.
+
+Magit's selection mechanism is based on the region but selects an
+area that is larger than the region.  This causes `previous-line'
+when invoked while holding the shift key to move up one line and
+thereby select two lines.  When invoked inside a hunk body this
+command does not move point on the first invocation and thereby
+it only selects a single line.  Which inconsistency you prefer
+is a matter of preference."
+  (declare (interactive-only
+            "use `forward-line' with negative argument instead."))
+  (interactive "p\np")
+  (unless arg (setq arg 1))
+  (let ((stay (or (magit-diff-inside-hunk-body-p)
+                  (magit-section-position-in-heading-p))))
+    (if (and stay (= arg 1) (magit--turn-on-shift-select-mode-p))
+        (push-mark nil nil t)
+      (with-no-warnings
+        (handle-shift-selection)
+        (previous-line (if stay (max (1- arg) 1) arg) try-vscroll)))))
+
+;;;###autoload
+(defun magit-next-line (&optional arg try-vscroll)
+  "Like `next-line' but with Magit-specific shift-selection.
+
+Magit's selection mechanism is based on the region but selects
+an area that is larger than the region.  This causes `next-line'
+when invoked while holding the shift key to move down one line
+and thereby select two lines.  When invoked inside a hunk body
+this command does not move point on the first invocation and
+thereby it only selects a single line.  Which inconsistency you
+prefer is a matter of preference."
+  (declare (interactive-only forward-line))
+  (interactive "p\np")
+  (unless arg (setq arg 1))
+  (let ((stay (or (magit-diff-inside-hunk-body-p)
+                  (magit-section-position-in-heading-p))))
+    (if (and stay (= arg 1) (magit--turn-on-shift-select-mode-p))
+        (push-mark nil nil t)
+      (with-no-warnings
+        (handle-shift-selection)
+        (next-line (if stay (max (1- arg) 1) arg) try-vscroll)))))
 
 ;;; Clean
 

@@ -1,6 +1,6 @@
 ;;; magit-tests.el --- tests for Magit
 
-;; Copyright (C) 2011-2017  The Magit Project Contributors
+;; Copyright (C) 2011-2018  The Magit Project Contributors
 ;;
 ;; License: GPLv3
 
@@ -9,6 +9,8 @@
 (require 'cl-lib)
 (require 'dash)
 (require 'ert)
+(require 'tramp)
+(require 'tramp-sh)
 
 (require 'magit)
 
@@ -252,9 +254,9 @@
 
 (defun magit-test-get-section (list file)
   (magit-status-internal default-directory)
-  (--first (equal (magit-section-value it) file)
-           (magit-section-children
-            (magit-get-section `(,list (status))))))
+  (--first (equal (oref it value) file)
+           (oref (magit-get-section `(,list (status)))
+                 children)))
 
 (ert-deftest magit-status:file-sections ()
   (magit-with-test-repository
