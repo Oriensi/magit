@@ -489,7 +489,7 @@ and `:slant'."
        :background "#ddffdd"
        :foreground "coral")
       (((class color) (background dark))
-       :background "#335533"
+       :background "#8787ff"
        :foreground "coral")))
   "Face for lines in a diff that have been added."
   :group 'magit-faces)
@@ -549,7 +549,7 @@ and `:slant'."
        :background "#cceecc"
        :foreground "orange")
       (((class color) (background dark))
-       :background "#336633"
+       :background "#8787ff"
        :foreground "orange")))
   "Face for lines in a diff that have been added."
   :group 'magit-faces)
