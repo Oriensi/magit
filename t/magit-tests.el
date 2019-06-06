@@ -182,7 +182,12 @@
     (should     (magit-get-boolean "a" "b"))
     (magit-git "config" "a.b" "false")
     (should-not (magit-get-boolean "a.b"))
-    (should-not (magit-get-boolean "a" "b"))))
+    (should-not (magit-get-boolean "a" "b"))
+    ;; Multiple values, last one wins.
+    (magit-git "config" "--add" "a.b" "true")
+    (should     (magit-get-boolean "a.b"))
+    (let ((magit--refresh-cache (list (cons 0 0))))
+     (should    (magit-get-boolean "a.b")))))
 
 (ert-deftest magit-get-{current|next}-tag ()
   (magit-with-test-repository
@@ -249,6 +254,29 @@
       (should (string-equal (magit-process-password-prompt
                              nil "Password for 'www.host.com':")
                             "mypasswd\n")))))
+
+(ert-deftest magit-process:password-prompt-observed ()
+  (with-temp-buffer
+    (cl-letf* ((test-proc (start-process
+                           "dummy-proc" (current-buffer)
+                           (concat invocation-directory invocation-name)
+                           "-Q" "--batch" "--eval" "(read-string \"\")"))
+               ((symbol-function 'read-passwd)
+                (lambda (_) "mypasswd"))
+               (sent-strings nil)
+               ((symbol-function 'process-send-string)
+                (lambda (_proc string) (push string sent-strings))))
+      ;; Don't get stuck when we close the buffer.
+      (set-process-query-on-exit-flag test-proc nil)
+      ;; Try some example passphrase prompts, reported by users.
+      (dolist (prompt '("
+Enter passphrase for key '/home/user/.ssh/id_rsa': "
+                        ;; Openssh 8.0 sends carriage return.
+                        "\
+\rEnter passphrase for key '/home/user/.ssh/id_ed25519': "))
+        (magit-process-filter test-proc prompt)
+        (should (equal (pop sent-strings) "mypasswd\n")))
+      (should (null sent-strings)))))
 
 ;;; Status
 

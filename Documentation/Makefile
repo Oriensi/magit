@@ -12,6 +12,7 @@ all: info
 info: $(INFOPAGES) dir
 html: $(HTMLFILES)
 pdf:  $(PDFFILES)
+epub: $(EPUBFILES)
 
 %.info: %.texi
 	@printf "Generating $@\n"
@@ -46,6 +47,15 @@ html-dir: $(TEXIFILES)
 	@printf "Generating $@\n"
 	@texi2pdf --clean $< > /dev/null
 
+%.epub: %.texi
+	@printf "Generating $@\n"
+	@makeinfo --docbook $< -o epub.xml
+	@xsltproc $(DOCBOOK_XSL) epub.xml 2> /dev/null
+	@echo "application/epub+zip" > mimetype
+	@zip -X --quiet --recurse-paths -0 $@ mimetype
+	@zip -X --quiet --recurse-paths -9 --no-dir-entries $@ META-INF OEBPS
+	@$(RMDIR) $(EPUBTRASH)
+
 ## Install ###########################################################
 
 install: install-info install-docs
@@ -63,6 +73,7 @@ install-info: info
 clean:
 	@printf "Cleaning Documentation/*...\n"
 	@$(RMDIR) dir $(INFOPAGES) $(HTMLFILES) $(HTMLDIRS) $(PDFFILES)
+	@$(RMDIR) $(EPUBFILES) $(EPUBTRASH)
 
 ## Release management ################################################
 
@@ -100,41 +111,49 @@ AUTHORS.md:
 	|| printf "FAILED (non-fatal)\n"
 
 DOMAIN         ?= magit.vc
-CFRONT_DIST    ?= E2LUHBKU1FBV02
-PUBLISH_BUCKET ?= s3://$(DOMAIN)
-PREVIEW_BUCKET ?= s3://preview.$(DOMAIN)
-PUBLISH_URL    ?= http://$(DOMAIN).s3-website.eu-central-1.amazonaws.com
-PREVIEW_URL    ?= http://preview.$(DOMAIN).s3-website.eu-central-1.amazonaws.com
+PUBLISH_PATH   ?= /manual/
+RELEASE_PATH   ?= /manual/$(VERSION)/
 
-preview-stats: stats
-	@printf "Uploading statistics...\n"
-	@aws s3 sync $(statsdir)      $(PREVIEW_BUCKET)/stats/
-	@printf "Uploaded to $(PREVIEW_URL)/stats/\n"
+S3_BUCKET      ?= s3://$(DOMAIN)
+PUBLISH_TARGET  = $(S3_BUCKET)$(PUBLISH_PATH)
+RELEASE_TARGET  = $(S3_BUCKET)$(RELEASE_PATH)
+
+CFRONT_DIST    ?= E2LUHBKU1FBV02
+CFRONT_PATHS    = $(PKG).html $(PKG).pdf $(PKG)/*
+
+comma := ,
+empty :=
+space := $(empty) $(empty)
 
 publish-stats: stats
 	@printf "Uploading statistics...\n"
-	@aws s3 sync $(statsdir)      $(PUBLISH_BUCKET)/stats/
+	@aws s3 sync $(statsdir) $(S3_BUCKET)/stats/
 	@printf "Uploaded to $(PUBLISH_URL)/stats/\n"
 	@printf "Generating CDN invalidation\n"
 	@aws cloudfront create-invalidation \
 	--distribution-id $(CFRONT_DIST) --paths "/stats/*" > /dev/null
 
-preview-manuals: html html-dir pdf
-	@printf "Uploading manuals...\n"
-	@aws s3 sync magit            $(PREVIEW_BUCKET)/manual/magit/
-	@aws s3 cp   magit.html       $(PREVIEW_BUCKET)/manual/
-	@aws s3 cp   magit.pdf        $(PREVIEW_BUCKET)/manual/
-	@printf "Uploaded to $(PREVIEW_URL)/manual/\n"
-
-publish-manuals: html html-dir pdf
-	@printf "Uploading manuals...\n"
-	@aws s3 sync magit            $(PUBLISH_BUCKET)/manual/magit/
-	@aws s3 cp   magit.html       $(PUBLISH_BUCKET)/manual/
-	@aws s3 cp   magit.pdf        $(PUBLISH_BUCKET)/manual/
-	@printf "Uploaded to $(PUBLISH_URL)/manual/\n"
+publish-manuals: $(PUBLISH_TARGETS)
+	@printf "Uploading manuals... $(PUBLISH_TARGETS)\n"
+	@aws s3 cp $(PKG).html $(PUBLISH_TARGET)
+	@aws s3 cp $(PKG).pdf  $(PUBLISH_TARGET)
+	@aws s3 cp $(PKG).epub $(PUBLISH_TARGET)
+	@printf "upload: ./$(PKG)/* to $(PUBLISH_TARGET)*\n"
+	@aws s3 sync --delete $(PKG) $(PUBLISH_TARGET)$(PKG)/ > /dev/null
 	@printf "Generating CDN invalidation\n"
-	@aws cloudfront create-invalidation \
-	--distribution-id $(CFRONT_DIST) --paths "/manual/*" > /dev/null
+	@aws cloudfront create-invalidation --distribution-id $(CFRONT_DIST) --paths \
+	"$(subst $(space),$(comma),$(addprefix $(PUBLISH_PATH),$(CFRONT_PATHS)))" > /dev/null
+
+release-manuals: $(PUBLISH_TARGETS)
+	@printf "Uploading release manuals...\n"
+	@aws s3 cp $(PKG).html $(RELEASE_TARGET)
+	@aws s3 cp $(PKG).pdf  $(RELEASE_TARGET)
+	@aws s3 cp $(PKG).epub $(RELEASE_TARGET)
+	@printf "upload: ./$(PKG)/* to $(RELEASE_TARGET)*\n"
+	@aws s3 sync --delete $(PKG) $(RELEASE_TARGET)$(PKG)/ > /dev/null
+	@printf "Generating CDN invalidation\n"
+	@aws cloudfront create-invalidation --distribution-id $(CFRONT_DIST) --paths \
+	"$(subst $(space),$(comma),$(addprefix $(RELEASE_PATH),$(CFRONT_PATHS)))" > /dev/null
 
 # Templates ##########################################################
 

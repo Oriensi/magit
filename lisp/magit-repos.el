@@ -1,6 +1,6 @@
 ;;; magit-repos.el --- listing repositories  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2018  The Magit Project Contributors
+;; Copyright (C) 2010-2019  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -29,9 +29,12 @@
 
 ;;; Code:
 
+(eval-when-compile
+  (require 'subr-x))
+
 (require 'magit-core)
 
-(declare-function magit-status-internal 'magit-status)
+(declare-function magit-status-setup-buffer "magit-status" (directory))
 
 (defvar x-stretch-cursor)
 
@@ -40,24 +43,17 @@
 (defcustom magit-repository-directories nil
   "List of directories that are or contain Git repositories.
 
-Each element has the form (DIRECTORY . DEPTH) or, for backward
-compatibility, just DIRECTORY.  DIRECTORY has to be a directory
-or a directory file-name, a string.  DEPTH, an integer, specifies
-the maximum depth to look for Git repositories.  If it is 0, then
-only add DIRECTORY itself.
+Each element has the form (DIRECTORY . DEPTH).  DIRECTORY has
+to be a directory or a directory file-name, a string.  DEPTH,
+an integer, specifies the maximum depth to look for Git
+repositories.  If it is 0, then only add DIRECTORY itself.
 
-For backward compatibility reasons an element may be a string,
-instead of a cons-cell, in which case the value of the obsolete
-option `magit-repository-directories-depth' specifies the depth."
-  :package-version '(magit . "2.8.0")
+This option controls which repositories are being listed by
+`magit-list-repositories'.  It also affects `magit-status'
+\(which see) in potentially surprising ways."
+  :package-version '(magit . "2.91.0")
   :group 'magit-essentials
-  :type '(repeat (choice (cons directory (integer :tag "Depth")) directory)))
-
-(defvar magit-repository-directories-depth 3
-  "The maximum depth to look for Git repositories.
-This variable is obsolete and only used for elements of the
-option `magit-repository-directories' (which see) that don't
-specify the depth directly.")
+  :type '(repeat (cons directory (integer :tag "Depth"))))
 
 (defgroup magit-repolist nil
   "List repositories in a buffer."
@@ -114,23 +110,13 @@ actually support that yet."
 (defun magit-list-repositories ()
   "Display a list of repositories.
 
-Use the options `magit-repository-directories'
-and `magit-repository-directories-depth' to
-control which repositories are displayed."
+Use the options `magit-repository-directories' to control which
+repositories are displayed."
   (interactive)
   (if magit-repository-directories
       (with-current-buffer (get-buffer-create "*Magit Repositories*")
         (magit-repolist-mode)
-        (setq tabulated-list-entries
-              (mapcar (-lambda ((id . path))
-                        (let ((default-directory path))
-                          (list path
-                                (vconcat (--map (or (funcall (nth 2 it) id) "")
-                                                magit-repolist-columns)))))
-                      (magit-list-repos-uniquify
-                       (--map (cons (file-name-nondirectory (directory-file-name it))
-                                    it)
-                              (magit-list-repos)))))
+        (magit-repolist-refresh)
         (tabulated-list-print)
         (switch-to-buffer (current-buffer)))
     (message "You need to customize `magit-repository-directories' %s"
@@ -141,7 +127,6 @@ control which repositories are displayed."
 (defvar magit-repolist-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
-    (define-key map "g" 'magit-list-repositories)
     (define-key map (if (featurep 'jkl) [return] (kbd "C-m"))
       'magit-repolist-status)
     map)
@@ -151,24 +136,37 @@ control which repositories are displayed."
   "Show the status for the repository at point."
   (interactive)
   (--if-let (tabulated-list-get-id)
-      (magit-status-internal (expand-file-name it))
+      (magit-status-setup-buffer (expand-file-name it))
     (user-error "There is no repository at point")))
 
 (define-derived-mode magit-repolist-mode tabulated-list-mode "Repos"
   "Major mode for browsing a list of Git repositories."
-  (setq x-stretch-cursor        nil)
+  (setq-local x-stretch-cursor  nil)
   (setq tabulated-list-padding  0)
   (setq tabulated-list-sort-key (cons "Path" nil))
   (setq tabulated-list-format
-        (vconcat (mapcar (-lambda ((title width _fn props))
+        (vconcat (mapcar (pcase-lambda (`(,title ,width ,_fn ,props))
                            (nconc (list title width t)
                                   (-flatten props)))
                          magit-repolist-columns)))
   (tabulated-list-init-header)
+  (add-hook 'tabulated-list-revert-hook 'magit-repolist-refresh nil t)
   (setq imenu-prev-index-position-function
         'magit-imenu--repolist-prev-index-position-function)
   (setq imenu-extract-index-name-function
         'magit-imenu--repolist-extract-index-name-function))
+
+(defun magit-repolist-refresh ()
+  (setq tabulated-list-entries
+        (mapcar (pcase-lambda (`(,id . ,path))
+                  (let ((default-directory path))
+                    (list path
+                          (vconcat (--map (or (funcall (nth 2 it) id) "")
+                                          magit-repolist-columns)))))
+                (magit-list-repos-uniquify
+                 (--map (cons (file-name-nondirectory (directory-file-name it))
+                              it)
+                        (magit-list-repos))))))
 
 ;;;; Columns
 
@@ -183,13 +181,16 @@ Usually this is just its basename."
 
 (defun magit-repolist-column-version (_id)
   "Insert a description of the repository's `HEAD' revision."
-  (let ((v (or (magit-git-string "describe" "--tags")
-               ;; If there are no tags, use the date in MELPA format.
-               (magit-git-string "show" "--no-patch" "--format=%cd-g%h"
-                                 "--date=format:%Y%m%d.%H%M"))))
-    (if (and v (string-match-p "\\`[0-9]" v))
-        (concat " " v)
-      v)))
+  (when-let ((v (or (magit-git-string "describe" "--tags" "--dirty")
+                    ;; If there are no tags, use the date in MELPA format.
+                    (magit-git-string "show" "--no-patch" "--format=%cd-g%h"
+                                      "--date=format:%Y%m%d.%H%M"))))
+    (save-match-data
+      (when (string-match "-dirty\\'" v)
+        (put-text-property (1+ (match-beginning 0)) (length v) 'face 'error v))
+      (if (and v (string-match "\\`[0-9]" v))
+          (concat " " v)
+        v))))
 
 (defun magit-repolist-column-branch (_id)
   "Insert the current branch."
@@ -212,7 +213,7 @@ Only one letter is shown, the first that applies."
 
 (defun magit-repolist-column-unpulled-from-upstream (_id)
   "Insert number of upstream commits not in the current branch."
-  (--when-let (magit-get-upstream-branch nil t)
+  (--when-let (magit-get-upstream-branch)
     (let ((n (cadr (magit-rev-diff-count "HEAD" it))))
       (propertize (number-to-string n) 'face (if (> n 0) 'bold 'shadow)))))
 
@@ -224,7 +225,7 @@ Only one letter is shown, the first that applies."
 
 (defun magit-repolist-column-unpushed-to-upstream (_id)
   "Insert number of commits in the current branch but not its upstream."
-  (--when-let (magit-get-upstream-branch nil t)
+  (--when-let (magit-get-upstream-branch)
     (let ((n (car (magit-rev-diff-count "HEAD" it))))
       (propertize (number-to-string n) 'face (if (> n 0) 'bold 'shadow)))))
 
@@ -256,15 +257,14 @@ the basenames are prefixed with the name of the respective
 parent directories.  The returned value is the actual path
 to the selected repository.
 
-With prefix argument simply read a directory name using
-`read-directory-name'."
-  (if (and (not read-directory-name) magit-repository-directories)
-      (let* ((repos (magit-list-repos-uniquify
-                     (--map (cons (file-name-nondirectory
-                                   (directory-file-name it))
-                                  it)
-                            (magit-list-repos))))
-             (reply (magit-completing-read "Git repository" repos)))
+If READ-DIRECTORY-NAME is non-nil or no repositories can be
+found based on the value of `magit-repository-directories',
+then read an arbitrary directory using `read-directory-name'
+instead."
+  (if-let ((repos (and (not read-directory-name)
+                       magit-repository-directories
+                       (magit-repos-alist))))
+      (let ((reply (magit-completing-read "Git repository" repos)))
         (file-name-as-directory
          (or (cdr (assoc reply repos))
              (if (file-directory-p reply)
@@ -275,14 +275,13 @@ With prefix argument simply read a directory name using
                           (or (magit-toplevel) default-directory)))))
 
 (defun magit-list-repos ()
-  (--mapcat (if (consp it)
-                (magit-list-repos-1 (car it) (cdr it))
-              (magit-list-repos-1 it magit-repository-directories-depth))
-            magit-repository-directories))
+  (cl-mapcan (pcase-lambda (`(,dir . ,depth))
+               (magit-list-repos-1 dir depth))
+             magit-repository-directories))
 
 (defun magit-list-repos-1 (directory depth)
   (cond ((file-readable-p (expand-file-name ".git" directory))
-         (list directory))
+         (list (file-name-as-directory directory)))
         ((and (> depth 0) (magit-file-accessible-directory-p directory))
          (--mapcat (and (file-directory-p it)
                         (magit-list-repos-1 it (1- depth)))
@@ -310,5 +309,11 @@ With prefix argument simply read a directory name using
      dict)
     result))
 
+(defun magit-repos-alist ()
+  (magit-list-repos-uniquify
+   (--map (cons (file-name-nondirectory (directory-file-name it)) it)
+          (magit-list-repos))))
+
+;;; _
 (provide 'magit-repos)
 ;;; magit-repos.el ends here
