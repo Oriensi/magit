@@ -52,6 +52,7 @@
                                       'face 'magit-branch-local)))
    ("p" magit-push-current-to-pushremote)
    ("u" magit-push-current-to-upstream)
+   ("g" magit-push-current-to-gerrit)
    ("e" "elsewhere" magit-push-current)]
   ["Push"
    [("o" "another branch"    magit-push-other)
@@ -169,6 +170,31 @@ the upstream."
             (concat u ", creating it and replacing invalid"))
            (t
             (concat u ", creating it")))))))
+
+;;;###autoload (autoload 'magit-push-current-to-gerrit "magit-push" nil t)
+(define-suffix-command magit-push-current-to-gerrit (args)
+  "Push the current branch to its upstream branch.
+
+With a prefix argument or when the upstream is either not
+configured or unusable, then let the user first configure
+the upstream."
+  :if 'magit-get-current-branch
+  :description 'magit-push--gerrit-upstream-description
+  (interactive (list (magit-push-arguments)))
+  (let* ((branch (or (magit-get-current-branch)
+                     (user-error "No branch is checked out")))
+         (remote (magit-get "branch" branch "remote"))
+         (merge  (magit-get "branch" branch "merge")))
+    (message "gerrit start merge: %s" merge)
+    (message "gerrit start remote: %s" remote)
+    (if (string-prefix-p "refs/heads/" merge)
+        (setq merge (string-remove-prefix "refs/heads/" merge)))
+    (setq merge (concat "refs/for/" merge))
+    (message "end merge: %s" merge)
+    (magit-run-git-async "push" "-v" args remote (concat branch ":" merge))))
+(defun magit-push--gerrit-upstream-description ()
+      (format "gerrit %s" (magit-get-upstream-branch)))
+
 
 ;;;###autoload
 (defun magit-push-current (target args)
