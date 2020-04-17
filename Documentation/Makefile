@@ -12,12 +12,13 @@ all: info
 info: $(INFOPAGES) dir
 html: $(HTMLFILES)
 pdf:  $(PDFFILES)
+epub: $(EPUBFILES)
 
 %.info: %.texi
 	@printf "Generating $@\n"
 	@$(MAKEINFO) --no-split $< -o $@
 
-dir: magit.info
+dir: magit.info magit-section.info
 	@printf "Generating dir\n"
 	@echo $^ | xargs -n 1 $(INSTALL_INFO) --dir=$@
 
@@ -41,10 +42,24 @@ html-dir: $(TEXIFILES)
 	@for f in $$(find magit -name '*.html') ; do \
 	sed -i -e $(HTML_FIXUP_CSS) -e $(HTML_FIXUP_ONLOAD) -e $(HTML_FIXUP_MENU) $$f ; \
 	done
+	@printf "Generating magit-section/*.html\n"
+	@$(MAKEINFO) --html $(MANUAL_HTML_ARGS) magit-section.texi
+	@for f in $$(find magit-section -name '*.html') ; do \
+	sed -i -e $(HTML_FIXUP_CSS) -e $(HTML_FIXUP_ONLOAD) -e $(HTML_FIXUP_MENU) $$f ; \
+	done
 
 %.pdf: %.texi
 	@printf "Generating $@\n"
 	@texi2pdf --clean $< > /dev/null
+
+%.epub: %.texi
+	@printf "Generating $@\n"
+	@$(MAKEINFO) --docbook $< -o epub.xml
+	@xsltproc $(DOCBOOK_XSL) epub.xml 2> /dev/null
+	@echo "application/epub+zip" > mimetype
+	@zip -X --quiet --recurse-paths -0 $@ mimetype
+	@zip -X --quiet --recurse-paths -9 --no-dir-entries $@ META-INF OEBPS
+	@$(RMDIR) $(EPUBTRASH)
 
 ## Install ###########################################################
 
@@ -63,11 +78,13 @@ install-info: info
 clean:
 	@printf "Cleaning Documentation/*...\n"
 	@$(RMDIR) dir $(INFOPAGES) $(HTMLFILES) $(HTMLDIRS) $(PDFFILES)
+	@$(RMDIR) $(EPUBFILES) $(EPUBTRASH)
 
 ## Release management ################################################
 
 ORG_ARGS  = --batch -Q $(ORG_LOAD_PATH)
-ORG_ARGS += -l magit-utils.el -l org-man -l ox-extra -l ox-texinfo+.el
+ORG_ARGS += -l magit-utils.el -l ox-extra -l ox-texinfo+.el
+ORG_ARGS += --eval "(or (require 'org-man nil t) (require 'ol-man))"
 ORG_EVAL  = --eval "(ox-extras-activate '(ignore-headlines))"
 ORG_EVAL += --eval "(setq indent-tabs-mode nil)"
 ORG_EVAL += --eval "(setq org-src-preserve-indentation nil)"
@@ -84,6 +101,9 @@ texi:
 	@$(EMACSBIN) $(ORG_ARGS) $(PKG).org $(ORG_EVAL)
 	@printf "\n" >> $(PKG).texi
 	@rm -f $(PKG).texi~
+	@$(EMACSBIN) $(ORG_ARGS) magit-section.org $(ORG_EVAL)
+	@printf "\n" >> magit-section.texi
+	@rm -f magit-section.texi~
 
 stats:
 	@printf "Generating statistics\n"
@@ -100,41 +120,61 @@ AUTHORS.md:
 	|| printf "FAILED (non-fatal)\n"
 
 DOMAIN         ?= magit.vc
-CFRONT_DIST    ?= E2LUHBKU1FBV02
-PUBLISH_BUCKET ?= s3://$(DOMAIN)
-PREVIEW_BUCKET ?= s3://preview.$(DOMAIN)
-PUBLISH_URL    ?= http://$(DOMAIN).s3-website.eu-central-1.amazonaws.com
-PREVIEW_URL    ?= http://preview.$(DOMAIN).s3-website.eu-central-1.amazonaws.com
+PUBLISH_PATH   ?= /manual/
+RELEASE_PATH   ?= /manual/$(VERSION)/
 
-preview-stats: stats
-	@printf "Uploading statistics...\n"
-	@aws s3 sync $(statsdir)      $(PREVIEW_BUCKET)/stats/
-	@printf "Uploaded to $(PREVIEW_URL)/stats/\n"
+S3_BUCKET      ?= s3://$(DOMAIN)
+PUBLISH_TARGET  = $(S3_BUCKET)$(PUBLISH_PATH)
+RELEASE_TARGET  = $(S3_BUCKET)$(RELEASE_PATH)
+
+CFRONT_DIST    ?= E2LUHBKU1FBV02
+CFRONT_PATHS    = $(PKG).html $(PKG).pdf $(PKG)/*
+
+comma := ,
+empty :=
+space := $(empty) $(empty)
 
 publish-stats: stats
 	@printf "Uploading statistics...\n"
-	@aws s3 sync $(statsdir)      $(PUBLISH_BUCKET)/stats/
+	@aws s3 sync $(statsdir) $(S3_BUCKET)/stats/
 	@printf "Uploaded to $(PUBLISH_URL)/stats/\n"
 	@printf "Generating CDN invalidation\n"
 	@aws cloudfront create-invalidation \
 	--distribution-id $(CFRONT_DIST) --paths "/stats/*" > /dev/null
 
-preview-manuals: html html-dir pdf
-	@printf "Uploading manuals...\n"
-	@aws s3 sync magit            $(PREVIEW_BUCKET)/manual/magit/
-	@aws s3 cp   magit.html       $(PREVIEW_BUCKET)/manual/
-	@aws s3 cp   magit.pdf        $(PREVIEW_BUCKET)/manual/
-	@printf "Uploaded to $(PREVIEW_URL)/manual/\n"
-
-publish-manuals: html html-dir pdf
-	@printf "Uploading manuals...\n"
-	@aws s3 sync magit            $(PUBLISH_BUCKET)/manual/magit/
-	@aws s3 cp   magit.html       $(PUBLISH_BUCKET)/manual/
-	@aws s3 cp   magit.pdf        $(PUBLISH_BUCKET)/manual/
-	@printf "Uploaded to $(PUBLISH_URL)/manual/\n"
+publish-manuals: $(PUBLISH_TARGETS)
+	@printf "Uploading manuals... $(PUBLISH_TARGETS)\n"
+	@aws s3 cp $(PKG).html $(PUBLISH_TARGET)
+	@aws s3 cp $(PKG).pdf  $(PUBLISH_TARGET)
+	@aws s3 cp $(PKG).epub $(PUBLISH_TARGET)
+	@printf "upload: ./$(PKG)/* to $(PUBLISH_TARGET)*\n"
+	@aws s3 sync --delete $(PKG) $(PUBLISH_TARGET)$(PKG)/ > /dev/null
+	@aws s3 cp magit-section.html $(PUBLISH_TARGET)
+	@aws s3 cp magit-section.pdf  $(PUBLISH_TARGET)
+	@aws s3 cp magit-section.epub $(PUBLISH_TARGET)
+	@printf "upload: ./magit-section/* to $(PUBLISH_TARGET)*\n"
+	@aws s3 sync --delete magit-section $(PUBLISH_TARGET)magit-section/ > /dev/null
 	@printf "Generating CDN invalidation\n"
-	@aws cloudfront create-invalidation \
-	--distribution-id $(CFRONT_DIST) --paths "/manual/*" > /dev/null
+	@aws cloudfront create-invalidation --distribution-id $(CFRONT_DIST) --paths \
+	"$(subst $(space),$(comma),$(addprefix $(PUBLISH_PATH),$(CFRONT_PATHS)))" > /dev/null
+
+release-manuals: $(PUBLISH_TARGETS)
+	@printf "Uploading release manuals...\n"
+	@aws s3 cp $(PKG).html $(RELEASE_TARGET)
+	@aws s3 cp $(PKG).pdf  $(RELEASE_TARGET)
+	@aws s3 cp $(PKG).epub $(RELEASE_TARGET)
+	@printf "upload: ./$(PKG)/* to $(RELEASE_TARGET)*\n"
+	@aws s3 sync --delete $(PKG) $(RELEASE_TARGET)$(PKG)/ > /dev/null
+	@aws s3 cp magit-section.html $(RELEASE_TARGET)
+	@aws s3 cp magit-section.pdf  $(RELEASE_TARGET)
+	@aws s3 cp magit-section.epub $(RELEASE_TARGET)
+	@printf "upload: ./magit-section/* to $(RELEASE_TARGET)*\n"
+	@aws s3 sync --delete magit-section $(RELEASE_TARGET)magit-section/ > /dev/null
+	@aws s3 cp $(PUBLISH_TARGET)dir.html $(RELEASE_TARGET)dir.html
+	@aws s3 cp $(PUBLISH_TARGET)dir/index.html $(RELEASE_TARGET)dir/index.html
+	@printf "Generating CDN invalidation\n"
+	@aws cloudfront create-invalidation --distribution-id $(CFRONT_DIST) --paths \
+	"$(subst $(space),$(comma),$(addprefix $(RELEASE_PATH),$(CFRONT_PATHS)))" > /dev/null
 
 # Templates ##########################################################
 
