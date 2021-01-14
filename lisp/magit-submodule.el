@@ -1,6 +1,6 @@
 ;;; magit-submodule.el --- submodule support for Magit  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2011-2019  The Magit Project Contributors
+;; Copyright (C) 2011-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -114,7 +114,7 @@ and also setting this variable to t will lead to tears."
 ;;; Popup
 
 ;;;###autoload (autoload 'magit-submodule "magit-submodule" nil t)
-(define-transient-command magit-submodule ()
+(transient-define-prefix magit-submodule ()
   "Act on a submodule."
   :man-page "git-submodule"
   ["Arguments"
@@ -145,7 +145,7 @@ and also setting this variable to t will lead to tears."
   ())
 
 (cl-defmethod transient-format-description ((obj magit--git-submodule-suffix))
-  (let ((value (transient-args transient--prefix)))
+  (let ((value (delq nil (mapcar 'transient-infix-value transient--suffixes))))
     (replace-regexp-in-string
      "\\[--[^]]+\\]"
      (lambda (match)
@@ -161,7 +161,7 @@ and also setting this variable to t will lead to tears."
      (cl-call-next-method obj))))
 
 ;;;###autoload (autoload 'magit-submodule-add "magit-submodule" nil t)
-(define-suffix-command magit-submodule-add (url &optional path name args)
+(transient-define-suffix magit-submodule-add (url &optional path name args)
   "Add the repository at URL as a module.
 
 Optional PATH is the path to the module relative to the root of
@@ -225,7 +225,7 @@ it is nil, then PATH also becomes the name."
          (if prefer-short name path)))))
 
 ;;;###autoload (autoload 'magit-submodule-register "magit-submodule" nil t)
-(define-suffix-command magit-submodule-register (modules)
+(transient-define-suffix magit-submodule-register (modules)
   "Register MODULES.
 
 With a prefix argument act on all suitable modules.  Otherwise,
@@ -244,7 +244,7 @@ single module from the user."
     (magit-run-git-async "submodule" "init" "--" modules)))
 
 ;;;###autoload (autoload 'magit-submodule-populate "magit-submodule" nil t)
-(define-suffix-command magit-submodule-populate (modules)
+(transient-define-suffix magit-submodule-populate (modules)
   "Create MODULES working directories, checking out the recorded commits.
 
 With a prefix argument act on all suitable modules.  Otherwise,
@@ -261,7 +261,7 @@ single module from the user."
     (magit-run-git-async "submodule" "update" "--init" "--" modules)))
 
 ;;;###autoload (autoload 'magit-submodule-update "magit-submodule" nil t)
-(define-suffix-command magit-submodule-update (modules args)
+(transient-define-suffix magit-submodule-update (modules args)
   "Update MODULES by checking out the recorded commits.
 
 With a prefix argument act on all suitable modules.  Otherwise,
@@ -284,7 +284,7 @@ single module from the user."
     (magit-run-git-async "submodule" "update" args "--" modules)))
 
 ;;;###autoload (autoload 'magit-submodule-synchronize "magit-submodule" nil t)
-(define-suffix-command magit-submodule-synchronize (modules args)
+(transient-define-suffix magit-submodule-synchronize (modules args)
   "Synchronize url configuration of MODULES.
 
 With a prefix argument act on all suitable modules.  Otherwise,
@@ -300,7 +300,7 @@ single module from the user."
     (magit-run-git-async "submodule" "sync" args "--" modules)))
 
 ;;;###autoload (autoload 'magit-submodule-unpopulate "magit-submodule" nil t)
-(define-suffix-command magit-submodule-unpopulate (modules args)
+(transient-define-suffix magit-submodule-unpopulate (modules args)
   "Remove working directories of MODULES.
 
 With a prefix argument act on all suitable modules.  Otherwise,
@@ -327,7 +327,7 @@ single module from the user."
   "Unregister MODULES and remove their working directories.
 
 For safety reasons, do not remove the gitdirs and if a module has
-uncomitted changes, then do not remove it at all.  If a module's
+uncommitted changes, then do not remove it at all.  If a module's
 gitdir is located inside the working directory, then move it into
 the gitdir of the superproject first.
 
@@ -411,7 +411,8 @@ whether they are wrapped in an additional section."
         (magit-insert-section (modules nil t)
           (magit-insert-heading
             (format "%s (%s)"
-                    (propertize "Modules" 'face 'magit-section-heading)
+                    (propertize "Modules"
+                                'font-lock-face 'magit-section-heading)
                     (length modules)))
           (magit-insert-section-body
             (magit--insert-modules)))
@@ -429,7 +430,8 @@ or, failing that, the abbreviated HEAD commit hash."
     (magit-insert-section (modules nil t)
       (magit-insert-heading
         (format "%s (%s)"
-                (propertize "Modules overview" 'face 'magit-section-heading)
+                (propertize "Modules overview"
+                            'font-lock-face 'magit-section-heading)
                 (length modules)))
       (magit-insert-section-body
         (magit--insert-modules-overview)))))
@@ -448,20 +450,21 @@ or, failing that, the abbreviated HEAD commit hash."
                 (expand-file-name (file-name-as-directory module))))
           (magit-insert-section (magit-module-section module t)
             (insert (propertize (format path-format module)
-                                'face 'magit-diff-file-heading))
+                                'font-lock-face 'magit-diff-file-heading))
             (if (not (file-exists-p ".git"))
                 (insert "(unpopulated)")
-              (insert (format branch-format
-                              (--if-let (magit-get-current-branch)
-                                  (propertize it 'face 'magit-branch-local)
-                                (propertize "(detached)" 'face 'warning))))
+              (insert (format
+                       branch-format
+                       (--if-let (magit-get-current-branch)
+                           (propertize it 'font-lock-face 'magit-branch-local)
+                         (propertize "(detached)" 'font-lock-face 'warning))))
               (--if-let (magit-git-string "describe" "--tags")
                   (progn (when (and magit-modules-overview-align-numbers
                                     (string-match-p "\\`[0-9]" it))
                            (insert ?\s))
-                         (insert (propertize it 'face 'magit-tag)))
+                         (insert (propertize it 'font-lock-face 'magit-tag)))
                 (--when-let (magit-rev-format "%h")
-                  (insert (propertize it 'face 'magit-hash)))))
+                  (insert (propertize it 'font-lock-face 'magit-hash)))))
             (insert ?\n))))))
   (insert ?\n))
 
@@ -474,9 +477,8 @@ or, failing that, the abbreviated HEAD commit hash."
 (defvar magit-module-section-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-file-section-map)
-    (unless (featurep 'jkl)
-      (define-key map "\C-j"   'magit-submodule-visit))
-    (define-key map [C-return] 'magit-submodule-visit)
+    (define-key map (kbd "C-j") 'magit-submodule-visit)
+    (define-key map [C-return]  'magit-submodule-visit)
     (define-key map [remap magit-visit-thing]  'magit-submodule-visit)
     (define-key map [remap magit-delete-thing] 'magit-submodule-unpopulate)
     (define-key map "K" 'magit-file-untrack)
@@ -548,8 +550,12 @@ These sections can be expanded to show the respective commits."
       (magit-insert-section section ((eval type) nil t)
         (string-match "\\`\\(.+\\) \\([^ ]+\\)\\'" heading)
         (magit-insert-heading
-          (propertize (match-string 1 heading) 'face 'magit-section-heading) " "
-          (propertize (match-string 2 heading) 'face 'magit-branch-remote) ":")
+          (propertize (match-string 1 heading)
+                      'font-lock-face 'magit-section-heading)
+          " "
+          (propertize (match-string 2 heading)
+                      'font-lock-face 'magit-branch-remote)
+          ":")
         (magit-with-toplevel
           (dolist (module modules)
             (when (magit-module-worktree-p module)
@@ -558,7 +564,9 @@ These sections can be expanded to show the respective commits."
                 (when (magit-file-accessible-directory-p default-directory)
                   (magit-insert-section sec (magit-module-section module t)
                     (magit-insert-heading
-                      (propertize module 'face 'magit-diff-file-heading) ":")
+                      (propertize module
+                                  'font-lock-face 'magit-diff-file-heading)
+                      ":")
                     (magit-git-wash
                         (apply-partially 'magit-log-wash-log 'module)
                       "-c" "push.default=current" "log" "--oneline" range)

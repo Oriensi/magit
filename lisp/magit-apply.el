@@ -1,6 +1,6 @@
 ;;; magit-apply.el --- apply Git diffs  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2019  The Magit Project Contributors
+;; Copyright (C) 2010-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -53,6 +53,7 @@
                   (path &optional prefer-short))
 (declare-function borg--maybe-absorb-gitdir "borg" (pkg))
 (declare-function borg--sort-submodule-sections "borg" (file))
+(declare-function borg-assimilate "borg" (package url &optional partially))
 (defvar borg-user-emacs-directory)
 
 ;;; Options
@@ -161,30 +162,64 @@ so causes the change to be applied to the index as well."
                      (concat (magit-diff-file-header section)
                              (magit-apply--section-content section))))
 
+(defun magit-apply--adjust-hunk-new-starts (hunks)
+  "Adjust new line numbers in headers of HUNKS for partial application.
+HUNKS should be a list of ordered, contiguous hunks to be applied
+from a file.  For example, if there is a sequence of hunks with
+the headers
+
+  @@ -2,6 +2,7 @@
+  @@ -10,6 +11,7 @@
+  @@ -18,6 +20,7 @@
+
+and only the second and third are to be applied, they would be
+adjusted as \"@@ -10,6 +10,7 @@\" and \"@@ -18,6 +19,7 @@\"."
+  (let* ((first-hunk (car hunks))
+         (offset (if (string-match diff-hunk-header-re-unified first-hunk)
+                     (- (string-to-number (match-string 3 first-hunk))
+                        (string-to-number (match-string 1 first-hunk)))
+                   (error "Hunk does not have expected header"))))
+    (if (= offset 0)
+        hunks
+      (mapcar (lambda (hunk)
+                (if (string-match diff-hunk-header-re-unified hunk)
+                    (replace-match (number-to-string
+                                    (- (string-to-number (match-string 3 hunk))
+                                       offset))
+                                   t t hunk 3)
+                  (error "Hunk does not have expected header")))
+              hunks))))
+
+(defun magit-apply--adjust-hunk-new-start (hunk)
+  (car (magit-apply--adjust-hunk-new-starts (list hunk))))
+
 (defun magit-apply-hunks (sections &rest args)
   (let ((section (oref (car sections) parent)))
     (when (string-match "^diff --cc" (oref section value))
       (user-error "Cannot un-/stage resolution hunks.  Stage the whole file"))
-    (magit-apply-patch section args
-                       (concat (oref section header)
-                               (mapconcat 'magit-apply--section-content
-                                          sections "")))))
+    (magit-apply-patch
+     section args
+     (concat (oref section header)
+             (mapconcat #'identity
+                        (magit-apply--adjust-hunk-new-starts
+                         (mapcar #'magit-apply--section-content sections))
+                        "")))))
 
 (defun magit-apply-hunk (section &rest args)
   (when (string-match "^diff --cc" (magit-section-parent-value section))
     (user-error "Cannot un-/stage resolution hunks.  Stage the whole file"))
   (magit-apply-patch (oref section parent) args
                      (concat (magit-diff-file-header section)
-                             (magit-apply--section-content section))))
+                             (magit-apply--adjust-hunk-new-start
+                              (magit-apply--section-content section)))))
 
 (defun magit-apply-region (section &rest args)
-  (unless (magit-diff-context-p)
-    (user-error "Not enough context to apply region.  Increase the context"))
   (when (string-match "^diff --cc" (magit-section-parent-value section))
     (user-error "Cannot un-/stage resolution hunks.  Stage the whole file"))
   (magit-apply-patch (oref section parent) args
                      (concat (magit-diff-file-header section)
-                             (magit-diff-hunk-region-patch section args))))
+                             (magit-apply--adjust-hunk-new-start
+                              (magit-diff-hunk-region-patch section args)))))
 
 (defun magit-apply-patch (section:s args patch)
   (let* ((files (if (atom section:s)
@@ -194,15 +229,15 @@ so causes the change to be applied to the index as well."
          (command (if (and command (string-match "^magit-\\([^-]+\\)" command))
                       (match-string 1 command)
                     "apply"))
-         (no-context (not (magit-diff-context-p)))
          (ignore-context (magit-diff-ignore-any-space-p)))
+    (unless (magit-diff-context-p)
+      (user-error "Not enough context to apply patch.  Increase the context"))
     (when (and magit-wip-before-change-mode (not inhibit-magit-refresh))
       (magit-wip-commit-before-change files (concat " before " command)))
     (with-temp-buffer
       (insert patch)
       (magit-run-git-with-input
        "apply" args "-p0"
-       (and no-context "--unidiff-zero")
        (and ignore-context "-C0")
        "--ignore-space-change" "-"))
     (unless inhibit-magit-refresh
@@ -328,28 +363,24 @@ ignored) files."
                           `((file . ,repo) (untracked) (status)))
                          start))
         (let* ((topdir (magit-toplevel))
+               (url (let ((default-directory
+                            (file-name-as-directory (expand-file-name repo))))
+                      (or (magit-get "remote" (magit-get-some-remote) "url")
+                          (concat (file-name-as-directory ".") repo))))
                (package
                 (and (equal (bound-and-true-p borg-user-emacs-directory)
                             topdir)
                      (file-name-nondirectory (directory-file-name repo)))))
-          (magit-submodule-add-1
-           (let ((default-directory
-                   (file-name-as-directory (expand-file-name repo))))
-             (or (magit-get "remote" (magit-get-some-remote) "url")
-                 (concat (file-name-as-directory ".") repo)))
-           repo
-           (magit-submodule-read-name-for-path repo package))
-          (when package
-            (borg--sort-submodule-sections
-             (expand-file-name ".gitmodules" topdir))
-            (let ((default-directory borg-user-emacs-directory))
-              (borg--maybe-absorb-gitdir package))
-            (when (and (y-or-n-p
-                        (format "Also build and activate `%s' drone?" package))
-                       (fboundp 'borg-build)
-                       (fboundp 'borg-activate))
-              (borg-build package)
-              (borg-activate package))))))
+          (if (and package
+                   (y-or-n-p (format "Also assimilate `%s' drone?" package)))
+              (borg-assimilate package url)
+            (magit-submodule-add-1
+             url repo (magit-submodule-read-name-for-path repo package))
+            (when package
+              (borg--sort-submodule-sections
+               (expand-file-name ".gitmodules" topdir))
+              (let ((default-directory borg-user-emacs-directory))
+                (borg--maybe-absorb-gitdir package)))))))
     (magit-wip-commit-after-apply files " after stage")))
 
 ;;;; Unstage

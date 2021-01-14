@@ -1,6 +1,6 @@
 ;;; magit-transient.el --- support for transients  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2008-2019  The Magit Project Contributors
+;; Copyright (C) 2008-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -165,9 +165,13 @@
      (propertize "[" 'face 'transient-inactive-value)
      (mapconcat (lambda (choice)
                   (propertize choice 'face (if (equal choice local)
-                                               'transient-value
+                                               (if (member choice choices)
+                                                   'transient-value
+                                                 'font-lock-warning-face)
                                              'transient-inactive-value)))
-                choices
+                (if (and local (not (member local choices)))
+                    (cons local choices)
+                  choices)
                 (propertize "|" 'face 'transient-inactive-value))
      (and (or global fallback default)
           (concat

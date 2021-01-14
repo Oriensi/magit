@@ -68,7 +68,9 @@
              ;; require a functioning `sudo'.
              (sudo-method (cdr (assoc "sudo" tramp-methods)))
              ((cdr (assq 'tramp-login-program sudo-method))
-              (list shell-file-name))
+              (list (if (file-executable-p "/bin/sh")
+                        "/bin/sh"
+                      shell-file-name)))
              ((cdr (assq 'tramp-login-args sudo-method)) nil))
     (magit-with-test-directory
      (setq default-directory
@@ -323,6 +325,14 @@ Enter passphrase for key '/home/user/.ssh/id_rsa': "
     (should (magit-test-get-section
              '(unpushed . "@{upstream}..")
              (magit-rev-parse "--short" "master")))))
+
+;;; Utils
+
+(ert-deftest magit-utils:add-face-text-property ()
+  (let ((str (concat (propertize "ab" 'font-lock-face 'highlight) "cd")))
+    (magit--add-face-text-property 0 (length str) 'bold nil str)
+    (should (equal (get-text-property 0 'font-lock-face str) '(bold highlight)))
+    (should (equal (get-text-property 2 'font-lock-face str) '(bold)))))
 
 ;;; magit-tests.el ends soon
 (provide 'magit-tests)

@@ -1,6 +1,6 @@
 ;;; magit-process.el --- process functionality  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2019  The Magit Project Contributors
+;; Copyright (C) 2010-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -99,6 +99,13 @@ When this is nil, no sections are ever removed."
   :group 'magit-process
   :type '(choice (const :tag "Never remove old sections" nil) integer))
 
+(defvar magit-process-extreme-logging nil
+  "Whether `magit-process-file' logs to *Messages* buffer.
+Only intended for temporary use when you try to figure out how
+Magit uses Git behind the scene.  Output that normally goes to
+the magit-process buffer continues to go there.  Not all output
+goes to either of these two buffers.")
+
 (defcustom magit-process-error-tooltip-max-lines 20
   "The number of lines for `magit-process-error-lines' to return.
 
@@ -150,7 +157,13 @@ itself from the hook, to avoid further futile attempts."
                  (const :tag "Don't start a cache daemon" nil)))
 
 (defcustom magit-process-yes-or-no-prompt-regexp
-  " [\[(]\\([Yy]\\(?:es\\)?\\)[/|]\\([Nn]o?\\)[\])] ?[?:] ?$"
+  (concat " [\[(]"
+          "\\([Yy]\\(?:es\\)?\\)"
+          "[/|]"
+          "\\([Nn]o?\\)"
+          ;; OpenSSH v8 prints this.  See #3969.
+          "\\(?:/\\[fingerprint\\]\\)?"
+          "[\])] ?[?:]? ?$")
   "Regexp matching Yes-or-No prompts of Git and its subprocesses."
   :package-version '(magit . "2.1.0")
   :group 'magit-process
@@ -159,7 +172,9 @@ itself from the hook, to avoid further futile attempts."
 (defcustom magit-process-password-prompt-regexps
   '("^\\(Enter \\)?[Pp]assphrase\\( for \\(RSA \\)?key '.*'\\)?: ?$"
     ;; Match-group 99 is used to identify the "user@host" part.
-    "^\\(Enter \\)?[Pp]assword\\( for '\\(https?://\\)?\\(?99:.*\\)'\\)?: ?$"
+    "^\\(Enter \\)?[Pp]assword\\( for '?\\(https?://\\)?\\(?99:[^']*\\)'?\\)?: ?$"
+    "Please enter the passphrase for the ssh key"
+    "Please enter the passphrase to unlock the OpenPGP secret key"
     "^.*'s password: ?$"
     "^Yubikey for .*: ?$"
     "^Enter PIN for .*: ?$")
@@ -220,7 +235,7 @@ While functions such as `magit-process-yes-or-no-prompt' may not
 be sufficient to handle some prompt, it may still be of benefit
 to look at the implementations to gain some insights on how to
 implement such functions."
-  :package-version '(magit . "2.91.0")
+  :package-version '(magit . "3.0.0")
   :group 'magit-process
   :type 'hook)
 
@@ -390,6 +405,9 @@ Process output goes into a new section in the buffer returned by
 Identical to `process-file' but temporarily enable Cygwin's
 \"noglob\" option during the call and ensure unix eol
 conversion."
+  (when magit-process-extreme-logging
+    (let ((inhibit-message t))
+      (message "$ %s" (magit-process--format-arguments process args))))
   (let ((process-environment (magit-process-environment))
         (default-process-coding-system (magit--process-coding-system)))
     (apply #'process-file process infile buffer display args)))
@@ -418,7 +436,7 @@ conversion."
   "Call Git in a separate process.
 ARGS is flattened and then used as arguments to Git.
 
-The current buffer's content is used as the process' standard
+The current buffer's content is used as the process's standard
 input.
 
 Option `magit-git-executable' specifies the Git executable and
@@ -617,29 +635,12 @@ Magit status buffer."
     (magit-insert-section (process)
       (insert (if errcode
                   (format "%3s " (propertize (number-to-string errcode)
-                                             'face 'magit-process-ng))
+                                             'font-lock-face 'magit-process-ng))
                 "run "))
       (unless (equal (expand-file-name pwd)
                      (expand-file-name default-directory))
         (insert (file-relative-name pwd default-directory) ?\s))
-      (cond
-       ((and args (equal program magit-git-executable))
-        (setq args (-split-at (length magit-git-global-arguments) args))
-        (insert (propertize (file-name-nondirectory program)
-                            'face 'magit-section-heading) " ")
-        (insert (propertize (char-to-string magit-ellipsis)
-                            'face 'magit-section-heading
-                            'help-echo (mapconcat #'identity (car args) " ")))
-        (insert " ")
-        (insert (propertize (mapconcat #'shell-quote-argument (cadr args) " ")
-                            'face 'magit-section-heading)))
-       ((and args (equal program shell-file-name))
-        (insert (propertize (cadr args) 'face 'magit-section-heading)))
-       (t
-        (insert (propertize (file-name-nondirectory program)
-                            'face 'magit-section-heading) " ")
-        (insert (propertize (mapconcat #'shell-quote-argument args " ")
-                            'face 'magit-section-heading))))
+      (insert (magit-process--format-arguments program args))
       (magit-insert-heading)
       (when errlog
         (if (bufferp errlog)
@@ -648,6 +649,29 @@ Magit status buffer."
           (insert-file-contents errlog)
           (goto-char (1- (point-max)))))
       (insert "\n"))))
+
+(defun magit-process--format-arguments (program args)
+  (cond
+   ((and args (equal program magit-git-executable))
+    (setq args (-split-at (length magit-git-global-arguments) args))
+    (concat (propertize (file-name-nondirectory program)
+                        'font-lock-face 'magit-section-heading)
+            " "
+            (propertize (char-to-string magit-ellipsis)
+                        'font-lock-face 'magit-section-heading
+                        'help-echo (mapconcat #'identity (car args) " "))
+            " "
+            (propertize (mapconcat #'shell-quote-argument (cadr args) " ")
+                        'font-lock-face 'magit-section-heading)))
+   ((and args (equal program shell-file-name))
+    (propertize (cadr args)
+                'font-lock-face 'magit-section-heading))
+   (t
+    (concat (propertize (file-name-nondirectory program)
+                        'font-lock-face 'magit-section-heading)
+            " "
+            (propertize (mapconcat #'shell-quote-argument args " ")
+                        'font-lock-face 'magit-section-heading)))))
 
 (defun magit-process-truncate-log ()
   (let* ((head nil)
@@ -906,7 +930,7 @@ as argument."
                           'mouse-face 'highlight
                           'keymap magit-mode-line-process-map
                           'help-echo "mouse-1: Show process buffer"
-                          'face 'magit-mode-line-process))))
+                          'font-lock-face 'magit-mode-line-process))))
     (magit-repository-local-set 'mode-line-process str)
     (dolist (buf (magit-mode-get-buffers))
       (with-current-buffer buf
@@ -930,7 +954,7 @@ If STR is supplied, it replaces the `mode-line-process' text."
                            'mouse-face 'highlight
                            'keymap magit-mode-line-process-map
                            'help-echo error
-                           'face 'magit-mode-line-process-error)))
+                           'font-lock-face 'magit-mode-line-process-error)))
     (magit-repository-local-set 'mode-line-process str)
     (dolist (buf (magit-mode-get-buffers))
       (with-current-buffer buf
@@ -966,7 +990,7 @@ If STR is supplied, it replaces the `mode-line-process' text."
   (let ((status (or mode-line-process
                     (magit-repository-local-get 'mode-line-process))))
     (when (and status
-               (eq (get-text-property 1 'face status)
+               (eq (get-text-property 1 'font-lock-face status)
                    'magit-mode-line-process-error))
       (magit-process-unset-mode-line))))
 
@@ -1053,9 +1077,9 @@ Limited by `magit-process-error-tooltip-max-lines'."
           (set-marker-insertion-type marker nil)
           (insert (propertize (format "%3s" arg)
                               'magit-section section
-                              'face (if (= arg 0)
-                                        'magit-process-ok
-                                      'magit-process-ng)))
+                              'font-lock-face (if (= arg 0)
+                                                  'magit-process-ok
+                                                'magit-process-ng)))
           (set-marker-insertion-type marker t))
         (when magit-process-finish-apply-ansi-colors
           (ansi-color-apply-on-region (oref section content)

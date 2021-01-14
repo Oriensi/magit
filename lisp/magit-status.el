@@ -1,6 +1,6 @@
 ;;; magit-status.el --- the grand overview  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2019  The Magit Project Contributors
+;; Copyright (C) 2010-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -117,6 +117,25 @@ control the initial visibility of the jumped to section."
                  (repeat (choice (number :tag "nth top-level section")
                                  (sexp   :tag "section identity")))))
 
+(defcustom magit-status-goto-file-position nil
+  "Whether to go to position corresponding to file position.
+
+If this is non-nil and the current buffer is visiting a file,
+then `magit-status' tries to go to the position in the status
+buffer that corresponds to the position in the file-visiting
+buffer.  This jumps into either the diff of unstaged changes
+or the diff of staged changes.
+
+If the previously current buffer does not visit a file, or if
+the file has neither unstaged nor staged changes then this has
+no effect.
+
+The command `magit-status-here' tries to go to that position,
+regardless of the value of this option."
+  :package-version '(magit . "3.0.0")
+  :group 'magit-status
+  :type 'boolean)
+
 (defcustom magit-status-show-hashes-in-headers nil
   "Whether headers in the status buffer show hashes.
 The functions which respect this option are
@@ -137,10 +156,12 @@ The functions which respect this option are
 The value has the form (INIT STYLE WIDTH AUTHOR AUTHOR-WIDTH).
 
 If INIT is non-nil, then the margin is shown initially.
-STYLE controls how to format the committer date.  It can be one
-  of `age' (to show the age of the commit), `age-abbreviated' (to
-  abbreviate the time unit to a character), or a string (suitable
-  for `format-time-string') to show the actual date.
+STYLE controls how to format the author or committer date.
+  It can be one of `age' (to show the age of the commit),
+  `age-abbreviated' (to abbreviate the time unit to a character),
+  or a string (suitable for `format-time-string') to show the
+  actual date.  Option `magit-log-margin-show-committer-date'
+  controls which date is being displayed.
 WIDTH controls the width of the margin.  This exists for forward
   compatibility and currently the value should not be changed.
 AUTHOR controls whether the name of the author is also shown by
@@ -154,6 +175,33 @@ AUTHOR-WIDTH has to be an integer.  When the name of the author
   :initialize 'magit-custom-initialize-reset
   :set-after '(magit-log-margin)
   :set (apply-partially #'magit-margin-set-variable 'magit-status-mode))
+
+(defcustom magit-status-use-buffer-arguments 'selected
+  "Whether `magit-status' reuses arguments when the buffer already exists.
+
+This option has no effect when merely refreshing the status
+buffer using `magit-refresh'.
+
+Valid values are:
+
+`always': Always use the set of arguments that is currently
+  active in the status buffer, provided that buffer exists
+  of course.
+`selected': Use the set of arguments from the status
+  buffer, but only if it is displayed in a window of the
+  current frame.  This is the default.
+`current': Use the set of arguments from the status buffer,
+  but only if it is the current buffer.
+`never': Never use the set of arguments from the status
+  buffer."
+  :package-version '(magit . "3.0.0")
+  :group 'magit-buffers
+  :group 'magit-commands
+  :type '(choice
+          (const :tag "always use args from buffer" always)
+          (const :tag "use args from buffer if displayed in frame" selected)
+          (const :tag "use args from buffer if it is current" current)
+          (const :tag "never use args from buffer" never)))
 
 ;;; Commands
 
@@ -243,6 +291,7 @@ prefix arguments:
 
 (put 'magit-status 'interactive-only 'magit-status-setup-buffer)
 
+;;;###autoload
 (defalias 'magit 'magit-status
   "An alias for `magit-status' for better discoverability.
 
@@ -250,6 +299,15 @@ Instead of invoking this alias for `magit-status' using
 \"M-x magit RET\", you should bind a key to `magit-status'
 and read the info node `(magit)Getting Started', which
 also contains other useful hints.")
+
+;;;###autoload
+(defun magit-status-here ()
+  "Like `magit-status' but with non-nil `magit-status-goto-file-position'."
+  (interactive)
+  (let ((magit-status-goto-file-position t))
+    (call-interactively #'magit-status)))
+
+(put 'magit-status-here 'interactive-only 'magit-status-setup-buffer)
 
 (defvar magit--remotes-using-recent-git nil)
 
@@ -259,7 +317,7 @@ also contains other useful hints.")
       (if-let ((version (let ((default-directory directory))
                           (magit-git-version))))
           (if (version<= magit--minimal-git version)
-              (push version magit--remotes-using-recent-git)
+              (push remote magit--remotes-using-recent-git)
             (display-warning 'magit (format "\
 Magit requires Git >= %s, but on %s the version is %s.
 
@@ -291,18 +349,44 @@ doesn't find the executable, then consult the info node
 (defvar magit-status-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map magit-mode-map)
-    (define-key map "jz" 'magit-jump-to-stashes)
-    (define-key map "jt" 'magit-jump-to-tracked)
-    (define-key map "jn" 'magit-jump-to-untracked)
-    (define-key map "ju" 'magit-jump-to-unstaged)
-    (define-key map "js" 'magit-jump-to-staged)
-    (define-key map "jfu" 'magit-jump-to-unpulled-from-upstream)
-    (define-key map "jfp" 'magit-jump-to-unpulled-from-pushremote)
-    (define-key map "jpu" 'magit-jump-to-unpushed-to-upstream)
-    (define-key map "jpp" 'magit-jump-to-unpushed-to-pushremote)
+    (define-key map "j" 'magit-status-jump)
     (define-key map [remap dired-jump] 'magit-dired-jump)
     map)
   "Keymap for `magit-status-mode'.")
+
+(transient-define-prefix magit-status-jump ()
+  "In a Magit-Status buffer, jump to a section."
+  ["Jump to"
+   [("z " "Stashes" magit-jump-to-stashes
+     :if (lambda () (memq 'magit-insert-stashes magit-status-sections-hook)))
+    ("t " "Tracked" magit-jump-to-tracked
+     :if (lambda () (memq 'magit-insert-tracked-files magit-status-sections-hook)))
+    ("n " "Untracked" magit-jump-to-untracked
+     :if (lambda () (memq 'magit-insert-untracked-files magit-status-sections-hook)))
+    ("u " "Unstaged" magit-jump-to-unstaged
+     :if (lambda () (memq 'magit-insert-unstaged-changes magit-status-sections-hook)))
+    ("s " "Staged" magit-jump-to-staged
+     :if (lambda () (memq 'magit-insert-staged-changes magit-status-sections-hook)))]
+   [("fu" "Unpulled from upstream" magit-jump-to-unpulled-from-upstream
+     :if (lambda () (memq 'magit-insert-unpulled-from-upstream magit-status-sections-hook)))
+    ("fp" "Unpulled from pushremote" magit-jump-to-unpulled-from-pushremote
+     :if (lambda () (memq 'magit-insert-unpulled-from-pushremote magit-status-sections-hook)))
+    ("pu" magit-jump-to-unpushed-to-upstream
+     :if (lambda ()
+           (or (memq 'magit-insert-unpushed-to-upstream-or-recent magit-status-sections-hook)
+               (memq 'magit-insert-unpushed-to-upstream magit-status-sections-hook)))
+     :description (lambda ()
+                    (let ((upstream (magit-get-upstream-branch)))
+                      (if (or (not upstream)
+                              (magit-rev-ancestor-p "HEAD" upstream))
+                          "Recent commits"
+                        "Unmerged into upstream"))))
+    ("pp" "Unpushed to pushremote" magit-jump-to-unpushed-to-pushremote
+     :if (lambda () (memq 'magit-insert-unpushed-to-pushremote magit-status-sections-hook)))
+    ("a " "Assumed unstaged" magit-jump-to-assume-unchanged
+     :if (lambda () (memq 'magit-insert-assume-unchanged-files magit-status-sections-hook)))
+    ("w " "Skip worktree" magit-jump-to-skip-worktree
+     :if (lambda () (memq 'magit-insert-skip-worktree-files magit-status-sections-hook)))]])
 
 (define-derived-mode magit-status-mode magit-mode "Magit"
   "Mode for looking at Git status.
@@ -346,13 +430,31 @@ Type \\[magit-commit] to create a commit.
     (setq directory default-directory))
   (magit--tramp-asserts directory)
   (let* ((default-directory directory)
-         (d (magit-diff--get-value 'magit-status-mode))
-         (l (magit-log--get-value  'magit-status-mode)))
-    (magit-setup-buffer #'magit-status-mode nil
-      (magit-buffer-diff-args  (nth 0 d))
-      (magit-buffer-diff-files (nth 1 d))
-      (magit-buffer-log-args   (nth 0 l))
-      (magit-buffer-log-files  (nth 1 l)))))
+         (d (magit-diff--get-value 'magit-status-mode
+                                   magit-status-use-buffer-arguments))
+         (l (magit-log--get-value 'magit-status-mode
+                                  magit-status-use-buffer-arguments))
+         (file (and magit-status-goto-file-position
+                    (magit-file-relative-name)))
+         (line (and file (line-number-at-pos)))
+         (col  (and file (current-column)))
+         (buf  (magit-setup-buffer #'magit-status-mode nil
+                 (magit-buffer-diff-args  (nth 0 d))
+                 (magit-buffer-diff-files (nth 1 d))
+                 (magit-buffer-log-args   (nth 0 l))
+                 (magit-buffer-log-files  (nth 1 l)))))
+    (when file
+      (with-current-buffer buf
+        (let ((staged (magit-get-section '((staged) (status)))))
+          (if (and staged
+                   (cadr (magit-diff--locate-hunk file line staged)))
+              (magit-diff--goto-position file line col staged)
+            (let ((unstaged (magit-get-section '((unstaged) (status)))))
+              (unless (and unstaged
+                           (magit-diff--goto-position file line col unstaged))
+                (when staged
+                  (magit-diff--goto-position file line col staged))))))))
+    buf))
 
 (defun magit-status-refresh-buffer ()
   (magit-git-exit-code "update-index" "--refresh")
@@ -393,13 +495,19 @@ This function removes itself from `magit-refresh-buffer-hook'."
   "When moving in the status buffer, update the revision buffer.
 If there is no revision buffer in the same frame, then do nothing."
   (when (derived-mode-p 'magit-status-mode)
-    (magit-log-maybe-update-revision-buffer-1)))
+    (magit--maybe-update-revision-buffer)))
+
+(defun magit-status-maybe-update-stash-buffer (&optional _)
+  "When moving in the status buffer, update the stash buffer.
+If there is no stash buffer in the same frame, then do nothing."
+  (when (derived-mode-p 'magit-status-mode)
+    (magit--maybe-update-stash-buffer)))
 
 (defun magit-status-maybe-update-blob-buffer (&optional _)
   "When moving in the status buffer, update the blob buffer.
 If there is no blob buffer in the same frame, then do nothing."
   (when (derived-mode-p 'magit-status-mode)
-    (magit-log-maybe-update-blob-buffer-1)))
+    (magit--maybe-update-blob-buffer)))
 
 ;;; Sections
 ;;;; Special Headers
@@ -419,7 +527,7 @@ The sections are inserted by running the functions on the hook
   "Keymap for `error' sections.")
 
 (defun magit-insert-error-header ()
-  "Insert the message about the Git error that just occured.
+  "Insert the message about the Git error that just occurred.
 
 This function is only aware of the last error that occur when Git
 was run for side-effects.  If, for example, an error occurs while
@@ -428,8 +536,9 @@ the status buffer causes this section to disappear again."
   (when magit-this-error
     (magit-insert-section (error 'git)
       (insert (propertize (format "%-10s" "GitError! ")
-                          'face 'magit-section-heading))
-      (insert (propertize magit-this-error 'face 'font-lock-warning-face))
+                          'font-lock-face 'magit-section-heading))
+      (insert (propertize magit-this-error
+                          'font-lock-face 'font-lock-warning-face))
       (when-let ((key (car (where-is-internal 'magit-process-buffer))))
         (insert (format "  [Type `%s' for details]" (key-description key))))
       (insert ?\n))
@@ -441,7 +550,7 @@ the status buffer causes this section to disappear again."
     (when (or ignore-modules
               magit-buffer-diff-files)
       (insert (propertize (format "%-10s" "Filter! ")
-                          'face 'magit-section-heading))
+                          'font-lock-face 'magit-section-heading))
       (when ignore-modules
         (insert ignore-modules)
         (when magit-buffer-diff-files
@@ -466,14 +575,14 @@ instead.  The optional BRANCH argument is for internal use only."
           (magit-insert-section (branch branch)
             (insert (format "%-10s" "Head: "))
             (when magit-status-show-hashes-in-headers
-              (insert (propertize commit 'face 'magit-hash) ?\s))
-            (insert (propertize branch 'face 'magit-branch-local))
+              (insert (propertize commit 'font-lock-face 'magit-hash) ?\s))
+            (insert (propertize branch 'font-lock-face 'magit-branch-local))
             (insert ?\s)
             (insert (funcall magit-log-format-message-function branch summary))
             (insert ?\n))
         (magit-insert-section (commit commit)
           (insert (format "%-10s" "Head: "))
-          (insert (propertize commit 'face 'magit-hash))
+          (insert (propertize commit 'font-lock-face 'magit-hash))
           (insert ?\s)
           (insert (funcall magit-log-format-message-function nil summary))
           (insert ?\n))))))
@@ -499,7 +608,7 @@ arguments are for internal use only."
            (if upstream
                (concat (and magit-status-show-hashes-in-headers
                             (concat (propertize (magit-rev-format "%h" upstream)
-                                                'face 'magit-hash)
+                                                'font-lock-face 'magit-hash)
                                     " "))
                        upstream " "
                        (funcall magit-log-format-message-function upstream
@@ -508,22 +617,23 @@ arguments are for internal use only."
                                              "(no commit message)"))))
              (cond
               ((magit--unnamed-upstream-p remote merge)
-               (concat (propertize merge  'face 'magit-branch-remote) " from "
-                       (propertize remote 'face 'bold)))
+               (concat (propertize merge  'font-lock-face 'magit-branch-remote)
+                       " from "
+                       (propertize remote 'font-lock-face 'bold)))
               ((magit--valid-upstream-p remote merge)
                (if (equal remote ".")
                    (concat
-                    (propertize merge 'face 'magit-branch-local)
+                    (propertize merge 'font-lock-face 'magit-branch-local)
                     (propertize " does not exist"
-                                'face 'font-lock-warning-face))
+                                'font-lock-face 'font-lock-warning-face))
                  (concat
-                  (propertize merge 'face 'magit-branch-remote)
+                  (propertize merge 'font-lock-face 'magit-branch-remote)
                   (propertize " does not exist on "
-                              'face 'font-lock-warning-face)
-                  (propertize remote 'face 'magit-branch-remote))))
+                              'font-lock-face 'font-lock-warning-face)
+                  (propertize remote 'font-lock-face 'magit-branch-remote))))
               (t
                (propertize "invalid upstream configuration"
-                           'face 'font-lock-warning-face)))))
+                           'font-lock-face 'font-lock-warning-face)))))
           (insert ?\n))))))
 
 (defun magit-insert-push-branch-header ()
@@ -537,7 +647,7 @@ arguments are for internal use only."
            (concat target " "
                    (and magit-status-show-hashes-in-headers
                         (concat (propertize (magit-rev-format "%h" target)
-                                            'face 'magit-hash)
+                                            'font-lock-face 'magit-hash)
                                 " "))
                    (funcall magit-log-format-message-function target
                             (funcall magit-log-format-message-function nil
@@ -547,10 +657,10 @@ arguments are for internal use only."
            (if (magit-remote-p remote)
                (concat target
                        (propertize " does not exist"
-                                   'face 'font-lock-warning-face))
+                                   'font-lock-face 'font-lock-warning-face))
              (concat remote
                      (propertize " remote does not exist"
-                                 'face 'font-lock-warning-face))))))
+                                 'font-lock-face 'font-lock-warning-face))))))
       (insert ?\n))))
 
 (defun magit-insert-tags-header ()
@@ -567,11 +677,12 @@ arguments are for internal use only."
         (insert (format "%-10s" (if both-tags "Tags: " "Tag: ")))
         (cl-flet ((insert-count
                    (tag count face)
-                   (insert (concat (propertize tag 'face 'magit-tag)
+                   (insert (concat (propertize tag 'font-lock-face 'magit-tag)
                                    (and (> count 0)
                                         (format " (%s)"
-                                                (propertize (format "%s" count)
-                                                            'face face)))))))
+                                                (propertize
+                                                 (format "%s" count)
+                                                 'font-lock-face face)))))))
           (when this-tag  (insert-count this-tag this-cnt 'magit-branch-local))
           (when both-tags (insert ", "))
           (when next-tag  (insert-count next-tag next-cnt 'magit-tag)))
@@ -586,7 +697,7 @@ arguments are for internal use only."
     (when (and name email)
       (magit-insert-section (user name)
         (insert (format "%-10s" "User: "))
-        (insert (propertize name 'face 'magit-log-author))
+        (insert (propertize name 'font-lock-face 'magit-log-author))
         (insert " <" email ">\n")))))
 
 (defun magit-insert-repo-header ()
@@ -607,7 +718,7 @@ remote in alphabetic order."
              (url (magit-get "remote" name "url")))
     (magit-insert-section (remote name)
       (insert (format "%-10s" "Remote: "))
-      (insert (propertize name 'face 'magit-branch-remote) ?\s)
+      (insert (propertize name 'font-lock-face 'magit-branch-remote) ?\s)
       (insert url ?\n))))
 
 ;;;; File Sections
@@ -646,13 +757,13 @@ value of that variable can be set using \"D -- DIRECTORY RET g\"."
                     (--mapcat (and (eq (aref it 0) ??)
                                    (list (substring it 3)))
                               (magit-git-items "status" "-z" "--porcelain"
-                                               (magit-ignore-submodules-p)
+                                               (magit-ignore-submodules-p t)
                                                "--" base))))
           (magit-insert-section (untracked)
             (magit-insert-heading "Untracked files:")
             (dolist (file files)
               (magit-insert-section (file file)
-                (insert (propertize file 'face 'magit-filename) ?\n)))
+                (insert (propertize file 'font-lock-face 'magit-filename) ?\n)))
             (insert ?\n)))))))
 
 (magit-define-section-jumper magit-jump-to-tracked "Tracked files" tracked)
@@ -685,6 +796,8 @@ of that variable can be set using \"D -- DIRECTORY RET g\"."
         (magit-insert-files files base)
         (insert ?\n)))))
 
+(magit-define-section-jumper magit-jump-to-skip-worktree "Skip-worktree files" skip-worktree)
+
 (defun magit-insert-skip-worktree-files ()
   "Insert a tree of skip-worktree files.
 
@@ -699,13 +812,29 @@ of that variable can be set using \"D -- DIRECTORY RET g\"."
         (magit-insert-files files base)
         (insert ?\n)))))
 
+(magit-define-section-jumper magit-jump-to-assume-unchanged "Assume-unchanged files" assume-unchanged)
+
+(defun magit-insert-assume-unchanged-files ()
+  "Insert a tree of files that are assumed to be unchanged.
+
+If the first element of `magit-buffer-diff-files' is a
+directory, then limit the list to files below that.  The value
+of that variable can be set using \"D -- DIRECTORY RET g\"."
+  (when-let ((files (magit-assume-unchanged-files)))
+    (let* ((base (car magit-buffer-diff-files))
+           (base (and base (file-directory-p base) base)))
+      (magit-insert-section (assume-unchanged nil t)
+        (magit-insert-heading "Assume-unchanged files:")
+        (magit-insert-files files base)
+        (insert ?\n)))))
+
 (defun magit-insert-files (files directory)
   (while (and files (string-prefix-p (or directory "") (car files)))
     (let ((dir (file-name-directory (car files))))
       (if (equal dir directory)
           (let ((file (pop files)))
             (magit-insert-section (file file)
-              (insert (propertize file 'face 'magit-filename) ?\n)))
+              (insert (propertize file 'font-lock-face 'magit-filename) ?\n)))
         (magit-insert-section (file dir t)
           (insert (propertize dir 'file 'magit-filename) ?\n)
           (magit-insert-heading)

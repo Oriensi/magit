@@ -38,7 +38,7 @@ BUILD_MAGIT_LIBGIT ?= true
 ## Files #############################################################
 
 PKG       = magit
-PACKAGES  = magit git-commit
+PACKAGES  = magit magit-section git-commit
 
 TEXIPAGES = $(addsuffix .texi,$(filter-out git-commit,$(PACKAGES)))
 INFOPAGES = $(addsuffix .info,$(filter-out git-commit,$(PACKAGES)))
@@ -54,6 +54,7 @@ ELS += magit-section.el
 ifeq "$(BUILD_MAGIT_LIBGIT)" "true"
 ELS += magit-libgit.el
 endif
+ELS += magit-git.el
 ELS += magit-mode.el
 ELS += magit-margin.el
 ELS += magit-process.el
@@ -101,21 +102,25 @@ ELGS = magit-autoloads.el magit-version.el
 
 ## Versions ##########################################################
 
-VERSION ?= $(shell test -e $(TOP).git && git describe --tags --abbrev=0 | cut -c2-)
+VERSION ?= $(shell \
+  test -e $(TOP).git && \
+  git describe --tags --abbrev=0 --always | cut -c2-)
 
-ASYNC_VERSION       = 1.9.3
-DASH_VERSION        = 2.14.1
-GIT_COMMIT_VERSION  = 2.91.0
+ASYNC_VERSION       = 1.9.4
+DASH_VERSION        = 2.17.0
+GIT_COMMIT_VERSION  = 3.0.0
 LIBGIT_VERSION      = 0
+MAGIT_SECTION_VERSION = 3.0.0
 TRANSIENT_VERSION   = 0
-WITH_EDITOR_VERSION = 2.8.0
+WITH_EDITOR_VERSION = 2.9.2
 
-ASYNC_MELPA_SNAPSHOT       = 20180527
-DASH_MELPA_SNAPSHOT        = 20180910
-GIT_COMMIT_MELPA_SNAPSHOT  = 20181104
+ASYNC_MELPA_SNAPSHOT       = 20200113
+DASH_MELPA_SNAPSHOT        = 20200524
+GIT_COMMIT_MELPA_SNAPSHOT  = 20200516
 LIBGIT_MELPA_SNAPSHOT      = 0
-TRANSIENT_MELPA_SNAPSHOT   = 20190528
-WITH_EDITOR_MELPA_SNAPSHOT = 20181103
+MAGIT_SECTION_MELPA_SNAPSHOT = 20200605
+TRANSIENT_MELPA_SNAPSHOT   = 20200601
+WITH_EDITOR_MELPA_SNAPSHOT = 20200522
 
 EMACS_VERSION = 25.1
 
@@ -132,7 +137,15 @@ endif
 
 ifndef LOAD_PATH
 
-ELPA_DIR ?= $(HOME)/.emacs.d/elpa
+USER_EMACS_DIR = $(HOME)/.emacs.d
+ifeq "$(wildcard $(USER_EMACS_DIR))" ""
+  XDG_CONFIG_DIR = $(or $(XDG_CONFIG_HOME),$(HOME)/.config)
+  ifneq "$(wildcard $(XDG_CONFIG_DIR)/emacs)" ""
+    USER_EMACS_DIR = $(XDG_CONFIG_DIR)/emacs
+  endif
+endif
+
+ELPA_DIR ?= $(USER_EMACS_DIR)/elpa
 
 DASH_DIR ?= $(shell \
   find -L $(ELPA_DIR) -maxdepth 1 -regex '.*/dash-[.0-9]*' 2> /dev/null | \
@@ -167,7 +180,7 @@ ifeq ($(SYSTYPE), windows-nt)
   CYGPATH := $(shell cygpath --version 2>/dev/null)
 endif
 
-LOAD_PATH = -L $(TOP)/lisp
+LOAD_PATH = -L $(TOP)lisp
 
 # When making changes here, then don't forget to adjust "Makefile",
 # ".travis.yml", ".github/ISSUE_TEMPLATE/bug_report.md",

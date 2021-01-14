@@ -1,6 +1,6 @@
 ;;; magit-autorevert.el --- revert buffers when files in repository change  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2019  The Magit Project Contributors
+;; Copyright (C) 2010-2021  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -108,6 +108,11 @@ seconds of user inactivity.  That is not desirable."
           (magit-turn-on-auto-revert-mode-if-desired)))
     (when (and buffer-file-name
                (file-readable-p buffer-file-name)
+               (or (< emacs-major-version 27)
+                   (with-no-warnings
+                     (condition-case nil
+                         (executable-find magit-git-executable t) ; see #3684
+                       (wrong-number-of-arguments t)))) ; very old 27 built
                (magit-toplevel)
                (or (not magit-auto-revert-tracked-only)
                    (magit-file-tracked-p buffer-file-name))
@@ -194,7 +199,13 @@ buffers that are not visiting files.
 The behavior of this mode can be customized using the options
 in the `autorevert' and `magit-autorevert' groups.
 
-This function calls the hook `magit-auto-revert-mode-hook'.")
+This function calls the hook `magit-auto-revert-mode-hook'.
+
+Like nearly every mode, this mode should be enabled or disabled
+by calling the respective mode function, the reason being that
+changing the state of a mode involves more than merely toggling
+a single switch, so setting the mode variable is not enough.
+Also, you should not use `after-init-hook' to disable this mode.")
 
 (defun magit-auto-revert-buffers ()
   (when (and magit-auto-revert-immediately
@@ -237,14 +248,20 @@ defaults to nil) for any BUFFER."
              ;; ^ `tramp-handle-file-in-directory-p' lacks this optimization.
              (file-in-directory-p dir top))))))
 
-(defun auto-revert-buffers--buffer-list-filter ()
+(defun auto-revert-buffers--buffer-list-filter (fn)
   (cl-incf magit-auto-revert-counter)
-  (when auto-revert-buffer-list-filter
-    (setq auto-revert-buffer-list
-          (-filter auto-revert-buffer-list-filter
-                   auto-revert-buffer-list))))
+  (if (or global-auto-revert-mode
+          (not auto-revert-buffer-list)
+          (not auto-revert-buffer-list-filter))
+      (funcall fn)
+    (let ((auto-revert-buffer-list
+           (-filter auto-revert-buffer-list-filter
+                    auto-revert-buffer-list)))
+      (funcall fn))
+    (unless auto-revert-timer
+      (auto-revert-set-timer))))
 
-(advice-add 'auto-revert-buffers :before
+(advice-add 'auto-revert-buffers :around
             'auto-revert-buffers--buffer-list-filter)
 
 ;;; _
