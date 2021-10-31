@@ -8,6 +8,8 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Magit is free software; you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -56,7 +58,7 @@
   :class 'transient-option
   :shortarg "-u"
   :argument "--local-user="
-  :reader 'magit-read-gpg-secret-key
+  :reader 'magit-read-gpg-signing-key
   :history-key 'magit:--gpg-sign)
 
 ;;;###autoload

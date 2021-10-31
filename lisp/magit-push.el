@@ -8,6 +8,8 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Magit is free software; you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -26,9 +28,6 @@
 ;; This library implements push commands.
 
 ;;; Code:
-
-(eval-when-compile
-  (require 'subr-x))
 
 (require 'magit)
 
@@ -91,8 +90,10 @@ argument the push-remote can be changed before pushed to it."
                (magit--select-push-remote "push there")))
     (when changed
       (magit-confirm 'set-and-push
-        (format "Really use \"%s\" as push-remote and push \"%s\" there"
-                remote branch)))
+        (replace-regexp-in-string
+         "%" "%%"
+         (format "Really use \"%s\" as push-remote and push \"%s\" there"
+                 remote branch))))
     (run-hooks 'magit-credential-hook)
     (magit-run-git-async "push" "-v" args remote
                          (format "refs/heads/%s:refs/heads/%s"
@@ -151,8 +152,10 @@ the upstream."
           ;; is what the user wants to happen.
           (setq merge (concat "refs/heads/" merge)))
         (magit-confirm 'set-and-push
-          (format "Really use \"%s\" as upstream and push \"%s\" there"
-                  upstream branch)))
+          (replace-regexp-in-string
+           "%" "%%"
+           (format "Really use \"%s\" as upstream and push \"%s\" there"
+                   upstream branch))))
       (cl-pushnew "--set-upstream" args :test #'equal))
     (run-hooks 'magit-credential-hook)
     (magit-run-git-async "push" "-v" args remote (concat branch ":" merge))))
@@ -218,11 +221,10 @@ only available for the part before the colon, or when no colon
 is used."
   (interactive
    (list (magit-read-remote "Push to remote")
-         (split-string (magit-completing-read-multiple
-                        "Push refspec,s"
-                        (cons "HEAD" (magit-list-local-branch-names))
-                        nil nil 'magit-push-refspecs-history)
-                       crm-default-separator t)
+         (magit-completing-read-multiple*
+          "Push refspec,s: "
+          (cons "HEAD" (magit-list-local-branch-names))
+          nil nil nil 'magit-push-refspecs-history)
          (magit-push-arguments)))
   (run-hooks 'magit-credential-hook)
   (magit-run-git-async "push" "-v" args remote refspecs))
@@ -284,8 +286,8 @@ If you add this suffix to a transient prefix without explicitly
 specifying the description, then an attempt is made to predict
 what this command will do.  For example:
 
-  (transient-insert-suffix 'magit-push \"p\"
-    '(\"i\" magit-push-implicitly))"
+  (transient-insert-suffix \\='magit-push \"p\"
+    \\='(\"i\" magit-push-implicitly))"
   :description 'magit-push-implicitly--desc
   (interactive (list (magit-push-arguments)))
   (run-hooks 'magit-credential-hook)
@@ -295,7 +297,7 @@ what this command will do.  For example:
   (let ((default (magit-get "push.default")))
     (unless (equal default "nothing")
       (or (when-let ((remote (or (magit-get-remote)
-                                 (magit-remote-p "origin")))
+                                 (magit-primary-remote)))
                      (refspec (magit-get "remote" remote "push")))
             (format "%s using %s"
                     (magit--propertize-face remote 'magit-branch-remote)

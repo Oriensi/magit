@@ -5,28 +5,28 @@
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
 
-;; Authors: Jonas Bernoulli <jonas@bernoul.li>
-;;	Sebastian Wiesner <lunaryorn@gmail.com>
-;;	Florian Ragwitz <rafl@debian.org>
-;;	Marius Vollmer <marius.vollmer@gmail.com>
+;; Author: Jonas Bernoulli <jonas@bernoul.li>
+;;      Sebastian Wiesner <lunaryorn@gmail.com>
+;;      Florian Ragwitz <rafl@debian.org>
+;;      Marius Vollmer <marius.vollmer@gmail.com>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
-;; Package-Requires: ((emacs "25.1") (dash "20200524") (transient "20200601") (with-editor "20200522"))
 ;; Keywords: git tools vc
 ;; Homepage: https://github.com/magit/magit
-
-;; This file is not part of GNU Emacs.
+;; Package-Requires: ((emacs "25.1") (transient "0.3.6") (with-editor "3.0.5"))
+;; Package-Version: 3.3.0
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
 ;; any later version.
-
+;;
 ;; This file is distributed in the hope that it will be useful,
 ;; but WITHOUT ANY WARRANTY; without even the implied warranty of
 ;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ;; GNU General Public License for more details.
-
+;;
 ;; You should have received a copy of the GNU General Public License
 ;; along with this file.  If not, see <http://www.gnu.org/licenses/>.
 
@@ -112,19 +112,21 @@
 ;;; Code:
 ;;;; Dependencies
 
-(require 'dash)
-(require 'log-edit)
+(require 'seq)
+(require 'subr-x)
+
 (require 'magit-git nil t)
+(require 'magit-mode nil t)
 (require 'magit-utils nil t)
+
+(require 'log-edit)
 (require 'ring)
 (require 'rx)
 (require 'server)
 (require 'transient)
 (require 'with-editor)
 
-(eval-when-compile
-  (require 'recentf)
-  (require 'subr-x))
+(defvar recentf-exclude)
 
 ;;;; Declarations
 
@@ -151,13 +153,21 @@
   :link '(info-link "(magit)Editing Commit Messages")
   :group 'tools)
 
-;;;###autoload
 (define-minor-mode global-git-commit-mode
   "Edit Git commit messages.
+
 This global mode arranges for `git-commit-setup' to be called
 when a Git commit message file is opened.  That usually happens
 when Git uses the Emacsclient as $GIT_EDITOR to have the user
-provide such a commit message."
+provide such a commit message.
+
+Loading the library `git-commit' by default enables this mode,
+but the library is not automatically loaded because doing that
+would pull in many dependencies and increase startup time too
+much.  You can either rely on `magit' loading this library or
+you can load it explicitly.  Autoloading is not an alternative
+because in this case autoloading would immediately trigger
+full loading."
   :group 'git-commit
   :type 'boolean
   :global t
@@ -178,8 +188,17 @@ The major mode configured here is turned on by the minor mode
   :type '(choice (function-item text-mode)
                  (function-item markdown-mode)
                  (function-item org-mode)
+                 (function-item fundamental-mode)
+                 (function-item git-commit-elisp-text-mode)
                  (function :tag "Another mode")
                  (const :tag "No major mode")))
+;;;###autoload(put 'git-commit-major-mode 'safe-local-variable
+;;;###autoload     (lambda (val)
+;;;###autoload       (memq val '(text-mode
+;;;###autoload                   markdown-mode
+;;;###autoload                   org-mode
+;;;###autoload                   fundamental-mode
+;;;###autoload                   git-commit-elisp-text-mode))))
 
 (defcustom git-commit-setup-hook
   '(git-commit-save-message
@@ -196,6 +215,7 @@ The major mode configured here is turned on by the minor mode
              git-commit-setup-changelog-support
              magit-generate-changelog
              git-commit-turn-on-auto-fill
+             git-commit-turn-on-orglink
              git-commit-turn-on-flyspell
              git-commit-propertize-diff
              bug-reference-mode
@@ -285,8 +305,18 @@ already using it, then you probably shouldn't start doing so."
     "Co-authored-by")
   "A list of Git pseudo headers to be highlighted."
   :group 'git-commit
-  :safe (lambda (val) (and (listp val) (-all-p 'stringp val)))
+  :safe (lambda (val) (and (listp val) (seq-every-p #'stringp val)))
   :type '(repeat string))
+
+(defcustom git-commit-use-local-message-ring nil
+  "Whether to use a local message ring instead of the global one.
+This can be set globally, in which case every repository gets its
+own commit message ring, or locally for a single repository.  If
+Magit isn't available, then setting this to a non-nil value has
+no effect."
+  :group 'git-commit
+  :safe 'booleanp
+  :type 'boolean)
 
 ;;;; Faces
 
@@ -421,13 +451,12 @@ This is only used if Magit is available."
 
 ;;; Hooks
 
-;;;###autoload
 (defconst git-commit-filename-regexp "/\\(\
 \\(\\(COMMIT\\|NOTES\\|PULLREQ\\|MERGEREQ\\|TAG\\)_EDIT\\|MERGE_\\|\\)MSG\
 \\|\\(BRANCH\\|EDIT\\)_DESCRIPTION\\)\\'")
 
-(eval-after-load 'recentf
-  '(add-to-list 'recentf-exclude git-commit-filename-regexp))
+(with-eval-after-load 'recentf
+  (add-to-list 'recentf-exclude git-commit-filename-regexp))
 
 (add-to-list 'with-editor-file-name-history-exclude git-commit-filename-regexp)
 
@@ -438,7 +467,6 @@ This is only used if Magit is available."
 
 (add-hook 'after-change-major-mode-hook 'git-commit-setup-font-lock-in-buffer)
 
-;;;###autoload
 (defun git-commit-setup-check-buffer ()
   (and buffer-file-name
        (string-match-p git-commit-filename-regexp buffer-file-name)
@@ -449,24 +477,27 @@ This is only used if Magit is available."
 (defun git-commit-file-not-found ()
   ;; cygwin git will pass a cygwin path (/cygdrive/c/foo/.git/...),
   ;; try to handle this in window-nt Emacs.
-  (--when-let
-      (and (or (string-match-p git-commit-filename-regexp buffer-file-name)
-               (and (boundp 'git-rebase-filename-regexp)
-                    (string-match-p git-rebase-filename-regexp
-                                    buffer-file-name)))
-           (not (file-accessible-directory-p
-                 (file-name-directory buffer-file-name)))
-           (if (require 'magit-git nil t)
-               ;; Emacs prepends a "c:".
-               (magit-expand-git-file-name (substring buffer-file-name 2))
-             ;; Fallback if we can't load `magit-git'.
-             (and (string-match "\\`[a-z]:/\\(cygdrive/\\)?\\([a-z]\\)/\\(.*\\)"
-                                buffer-file-name)
-                  (concat (match-string 2 buffer-file-name) ":/"
-                          (match-string 3 buffer-file-name)))))
-    (when (file-accessible-directory-p (file-name-directory it))
+  (when-let
+      ((file (and (or (string-match-p git-commit-filename-regexp
+                                      buffer-file-name)
+                      (and (boundp 'git-rebase-filename-regexp)
+                           (string-match-p git-rebase-filename-regexp
+                                           buffer-file-name)))
+                  (not (file-accessible-directory-p
+                        (file-name-directory buffer-file-name)))
+                  (if (require 'magit-git nil t)
+                      ;; Emacs prepends a "c:".
+                      (magit-expand-git-file-name
+                       (substring buffer-file-name 2))
+                    ;; Fallback if we can't load `magit-git'.
+                    (and (string-match
+                          "\\`[a-z]:/\\(cygdrive/\\)?\\([a-z]\\)/\\(.*\\)"
+                          buffer-file-name)
+                         (concat (match-string 2 buffer-file-name) ":/"
+                                 (match-string 3 buffer-file-name)))))))
+    (when (file-accessible-directory-p (file-name-directory file))
       (let ((inhibit-read-only t))
-        (insert-file-contents it t)
+        (insert-file-contents file t)
         t))))
 
 (when (eq system-type 'windows-nt)
@@ -478,13 +509,23 @@ Type \\[with-editor-finish] to finish, \
 \\[git-commit-prev-message] and \\[git-commit-next-message] \
 to recover older messages")
 
-;;;###autoload
 (defun git-commit-setup ()
   (when (fboundp 'magit-toplevel)
     ;; `magit-toplevel' is autoloaded and defined in magit-git.el,
     ;; That library declares this functions without loading
     ;; magit-process.el, which defines it.
     (require 'magit-process nil t))
+  (when git-commit-major-mode
+    (let ((auto-mode-alist (list (cons (concat "\\`"
+                                               (regexp-quote buffer-file-name)
+                                               "\\'")
+                                       git-commit-major-mode)))
+          ;; The major-mode hook might want to consult these minor
+          ;; modes, while the minor-mode hooks might want to consider
+          ;; the major mode.
+          (git-commit-mode t)
+          (with-editor-mode t))
+      (normal-mode t)))
   ;; Pretend that git-commit-mode is a major-mode,
   ;; so that directory-local settings can be used.
   (let ((default-directory
@@ -501,17 +542,6 @@ to recover older messages")
           (major-mode 'git-commit-mode)) ; trick dir-locals-collect-variables
       (hack-dir-local-variables)
       (hack-local-variables-apply)))
-  (when git-commit-major-mode
-    (let ((auto-mode-alist (list (cons (concat "\\`"
-                                               (regexp-quote buffer-file-name)
-                                               "\\'")
-                                       git-commit-major-mode)))
-          ;; The major-mode hook might want to consult these minor
-          ;; modes, while the minor-mode hooks might want to consider
-          ;; the major mode.
-          (git-commit-mode t)
-          (with-editor-mode t))
-      (normal-mode t)))
   ;; Show our own message using our hook.
   (setq with-editor-show-usage nil)
   (setq with-editor-usage-message git-commit-usage-message)
@@ -540,9 +570,9 @@ to recover older messages")
       (magit-wip-maybe-add-commit-hook)))
   (setq with-editor-cancel-message
         'git-commit-cancel-message)
-  (make-local-variable 'log-edit-comment-ring-index)
   (git-commit-mode 1)
   (git-commit-setup-font-lock)
+  (git-commit-prepare-message-ring)
   (when (boundp 'save-place)
     (setq save-place nil))
   (save-excursion
@@ -594,6 +624,16 @@ to `git-commit-fill-column'."
   (setq-local comment-auto-fill-only-comments nil)
   (turn-on-auto-fill))
 
+(defun git-commit-turn-on-orglink ()
+  "Turn on Orglink mode if it is available.
+If `git-commit-major-mode' is `org-mode', then silently forgo
+turning on `orglink-mode'."
+  (when (and (not (derived-mode-p 'org-mode))
+             (boundp 'orglink-match-anywhere)
+             (fboundp 'orglink-mode))
+    (setq-local orglink-match-anywhere t)
+    (orglink-mode 1)))
+
 (defun git-commit-turn-on-flyspell ()
   "Unconditionally turn on Flyspell mode.
 Also prevent comments from being checked and
@@ -625,7 +665,7 @@ finally check current non-comment text."
   "Check for violations of certain basic style conventions.
 
 For each violation ask the user if she wants to proceed anyway.
-Option `git-commit-check-style-conventions' controls which
+Option `git-commit-style-convention-checks' controls which
 conventions are checked."
   (or force
       (save-excursion
@@ -690,7 +730,20 @@ With a numeric prefix ARG, go forward ARG comments."
   (when-let ((message (git-commit-buffer-message)))
     (when-let ((index (ring-member log-edit-comment-ring message)))
       (ring-remove log-edit-comment-ring index))
-    (ring-insert log-edit-comment-ring message)))
+    (ring-insert log-edit-comment-ring message)
+    (when (and git-commit-use-local-message-ring
+               (fboundp 'magit-repository-local-set))
+      (magit-repository-local-set 'log-edit-comment-ring
+                                  log-edit-comment-ring))))
+
+(defun git-commit-prepare-message-ring ()
+  (make-local-variable 'log-edit-comment-ring-index)
+  (when (and git-commit-use-local-message-ring
+             (fboundp 'magit-repository-local-get))
+    (setq-local log-edit-comment-ring
+                (magit-repository-local-get
+                 'log-edit-comment-ring
+                 (make-ring log-edit-maximum-comment-ring-size)))))
 
 (defun git-commit-buffer-message ()
   (let ((flush (concat "^" comment-start))
@@ -929,7 +982,7 @@ Added to `font-lock-extend-region-functions'."
      ;; Your branch is up to date with 'master'.
      ;; Your branch and 'master' have diverged,
      . `(,(format
-           "^%s Your branch \\(?:is up-to-date with\\|and\\) '%s'"
+           "^%s Your branch \\(?:is up[- ]to[- ]date with\\|and\\) '%s'"
            comment-start git-commit--branch-name-regexp)
          (1 'git-commit-comment-branch-local t)
          (2 'git-commit-comment-branch-remote t)))
@@ -941,7 +994,7 @@ Added to `font-lock-extend-region-functions'."
          (1 'bold t)
          (2 'bold t)))))
 
-(defvar git-commit-font-lock-keywords git-commit-font-lock-keywords-2
+(defvar git-commit-font-lock-keywords git-commit-font-lock-keywords-3
   "Font-Lock keywords for Git-Commit mode.")
 
 (defun git-commit-setup-font-lock ()
@@ -973,17 +1026,14 @@ Added to `font-lock-extend-region-functions'."
                   (progn
                     ;; Make sure the below functions are available.
                     (require 'magit)
-                    ;; Font-Lock wants every submatch to succeed,
-                    ;; so also match the empty string.  Do not use
-                    ;; `regexp-quote' because that is slow if there
-                    ;; are thousands of branches outweighing the
-                    ;; benefit of an efficient regep.
-                    (format "\\(\\(?:%s\\)\\|\\)\\(\\(?:%s\\)\\|\\)"
+                    ;; Font-Lock wants every submatch to succeed, so
+                    ;; also match the empty string.  Avoid listing
+                    ;; remote branches and using `regexp-quote',
+                    ;; because in repositories have thousands of
+                    ;; branches that would be very slow.  See #4353.
+                    (format "\\(\\(?:%s\\)\\|\\)\\([^']+\\)"
                             (mapconcat #'identity
                                        (magit-list-local-branch-names)
-                                       "\\|")
-                            (mapconcat #'identity
-                                       (magit-list-remote-branch-names)
                                        "\\|")))
                 "\\([^']*\\)"))
   (setq-local font-lock-multiline t)

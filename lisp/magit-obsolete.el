@@ -8,6 +8,8 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Magit is free software; you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -51,6 +53,9 @@
 
 (define-obsolete-variable-alias 'magit-disable-line-numbers
   'magit-section-disable-line-numbers "Magit 3.0.0")
+
+(define-obsolete-variable-alias 'inhibit-magit-refresh
+  'magit-inhibit-refresh "Magit 3.0.0")
 
 (defun magit--magit-popup-warning ()
   (display-warning 'magit "\

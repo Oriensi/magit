@@ -8,7 +8,7 @@
 ;; Author: Phil Jackson <phil@shellarchive.co.uk>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
-;; This file is not part of GNU Emacs.
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -74,21 +74,13 @@
 
 ;;; Code:
 
-(require 'dash)
+(require 'magit)
+
 (require 'easymenu)
 (require 'server)
 (require 'with-editor)
-(require 'magit)
 
-(and (require 'async-bytecomp nil t)
-     (let ((pkgs (bound-and-true-p async-bytecomp-allowed-packages)))
-       (if (consp pkgs)
-           (cl-intersection '(all magit) pkgs)
-         (memq pkgs '(all t))))
-     (fboundp 'async-bytecomp-package-mode)
-     (async-bytecomp-package-mode 1))
-
-(eval-when-compile (require 'recentf))
+(defvar recentf-exclude)
 
 ;;; Options
 ;;;; Variables
@@ -451,7 +443,7 @@ current line."
     (when bounds
       (magit-section-make-overlay (car bounds) (cadr bounds)
                                   'magit-section-heading-selection))
-    (if (and bounds (not magit-keep-region-overlay))
+    (if (and bounds (not magit-section-keep-region-overlay))
         (funcall (default-value 'redisplay-unhighlight-region-function) rol)
       (funcall (default-value 'redisplay-highlight-region-function)
                start end window rol))))
@@ -826,8 +818,8 @@ By default, this is the same except for the \"pick\" command."
 (add-to-list 'with-editor-server-window-alist
              (cons git-rebase-filename-regexp 'switch-to-buffer))
 
-(eval-after-load 'recentf
-  '(add-to-list 'recentf-exclude git-rebase-filename-regexp))
+(with-eval-after-load 'recentf
+  (add-to-list 'recentf-exclude git-rebase-filename-regexp))
 
 (add-to-list 'with-editor-file-name-history-exclude git-rebase-filename-regexp)
 

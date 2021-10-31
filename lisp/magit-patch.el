@@ -8,6 +8,8 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Magit is free software; you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -26,9 +28,6 @@
 ;; This library implements patch commands.
 
 ;;; Code:
-
-(eval-when-compile
-  (require 'subr-x))
 
 (require 'magit)
 
@@ -58,10 +57,11 @@ the prefix argument."
 (transient-define-prefix magit-patch ()
   "Create or apply patches."
   ["Actions"
-   ("c"  "Create patches"     magit-patch-create)
-   ("a"  "Apply patch"        magit-patch-apply)
-   ("s"  "Save diff as patch" magit-patch-save)
-   ("r"  "Request pull"       magit-request-pull)])
+   [("c"  "Create patches"     magit-patch-create)
+    ("w"  "Apply patches"      magit-am)]
+   [("a"  "Apply plain patch"  magit-patch-apply)
+    ("s"  "Save diff as patch" magit-patch-save)]
+   [("r"  "Request pull"       magit-request-pull)]])
 
 ;;;###autoload (autoload 'magit-patch-create "magit-patch" nil t)
 (transient-define-prefix magit-patch-create (range args files)

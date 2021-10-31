@@ -8,6 +8,8 @@
 ;; Author: Jonas Bernoulli <jonas@bernoul.li>
 ;; Maintainer: Jonas Bernoulli <jonas@bernoul.li>
 
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Magit is free software; you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
@@ -65,9 +67,9 @@
     ("-p" "Follow only first parent of a merge" "--first-parent"
      :if (lambda () (version<= "2.29" (magit-git-version))))
     (6 magit-bisect:--term-old
-     :if (lambda () (version<= "2.7" (magit-git-version))))
+       :if (lambda () (version<= "2.7" (magit-git-version))))
     (6 magit-bisect:--term-new
-     :if (lambda () (version<= "2.7" (magit-git-version))))]
+       :if (lambda () (version<= "2.7" (magit-git-version))))]
    ["Actions"
     ("B" "Start"        magit-bisect-start)
     ("s" "Start script" magit-bisect-run)]]
@@ -76,7 +78,7 @@
    ("B" "Bad"          magit-bisect-bad)
    ("g" "Good"         magit-bisect-good)
    (6 "m" "Mark"       magit-bisect-mark
-    :if (lambda () (version<= "2.7" (magit-git-version))))
+      :if (lambda () (version<= "2.7" (magit-git-version))))
    ("k" "Skip"         magit-bisect-skip)
    ("r" "Reset"        magit-bisect-reset)
    ("s" "Run script"   magit-bisect-run)])
@@ -194,7 +196,14 @@ bisect run'."
                                 (magit-bisect-start-read-args))))
                  (cons (read-shell-command "Bisect shell command: ") args)))
   (when (and bad good)
-    (magit-bisect-start bad good args))
+    ;; Avoid `magit-git-bisect' because it's asynchronous, but the
+    ;; next `git bisect run' call requires the bisect to be started.
+    (magit-with-toplevel
+      (magit-process-git
+       (list :file (magit-git-dir "BISECT_CMD_OUTPUT"))
+       (magit-process-git-arguments
+        (list "bisect" "start" bad good args)))
+      (magit-refresh)))
   (magit-git-bisect "run" (list shell-file-name shell-command-switch cmdline)))
 
 (defun magit-git-bisect (subcommand &optional args no-assert)
