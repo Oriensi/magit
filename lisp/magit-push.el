@@ -51,6 +51,7 @@
                                       'face 'magit-branch-local)))
    ("p" magit-push-current-to-pushremote)
    ("u" magit-push-current-to-upstream)
+   ("g" magit-push-current-to-gerrit)
    ("e" "elsewhere" magit-push-current)]
   ["Push"
    [("o" "another branch"    magit-push-other)
@@ -98,6 +99,7 @@ argument the push-remote can be changed before pushed to it."
     (magit-run-git-async "push" "-v" args remote
                          (format "refs/heads/%s:refs/heads/%s"
                                  branch branch)))) ; see #3847 and #3872
+
 
 (defun magit-push--pushbranch-description ()
   (let* ((branch (magit-get-current-branch))
@@ -159,6 +161,58 @@ the upstream."
       (cl-pushnew "--set-upstream" args :test #'equal))
     (run-hooks 'magit-credential-hook)
     (magit-run-git-async "push" "-v" args remote (concat branch ":" merge))))
+
+;; added by pasiel for push to gerrit
+;;;###autoload (autoload 'magit-push-current-to-gerrit "magit-push" nil t)
+(transient-define-suffix magit-push-current-to-gerrit (args)
+  "Push the current branch to its push-remote for gerrit.
+
+With a prefix argument or when the upstream is either not
+configured or unusable, then let the user first configure
+the upstream."
+  :if 'magit-get-current-branch
+  :description 'magit-push--gerrit-upstream-description
+  (interactive (list (magit-push-arguments)))
+  (let* ((branch (or (magit-get-current-branch)
+                     (user-error "No branch is checked out")))
+         (remote (magit-get "branch" branch "remote"))
+         (merge  (magit-get "branch" branch "merge")))
+    (when (or current-prefix-arg
+              (not (or (magit-get-upstream-branch branch)
+                       (magit--unnamed-upstream-p remote merge)
+                       (magit--valid-upstream-p remote merge))))
+      (let* ((branches (-union (--map (concat it "/" branch)
+                                      (magit-list-remotes))
+                               (magit-list-remote-branch-names)))
+             (upstream (magit-completing-read
+                        (format "Set upstream of %s and push there" branch)
+                        branches nil nil nil 'magit-revision-history
+                        (or (car (member (magit-remote-branch-at-point) branches))
+                            (car (member "origin/master" branches)))))
+             (upstream* (or (magit-get-tracked upstream)
+                            (magit-split-branch-name upstream))))
+        (setq remote (car upstream*))
+        (setq merge  (cdr upstream*))
+        (unless (string-prefix-p "refs/" merge)
+          ;; User selected a non-existent remote-tracking branch.
+          ;; It is very likely, but not certain, that this is the
+          ;; correct thing to do.  It is even more likely that it
+          ;; is what the user wants to happen.
+          (setq merge (concat "refs/heads/" merge)))
+        (magit-confirm 'set-and-push
+          (format "Really use \"%s\" as upstream and push \"%s\" there"
+                  upstream branch)))
+      (cl-pushnew "--set-upstream" args :test #'equal))
+    (run-hooks 'magit-credential-hook)
+    (setq merge (concat "refs/for/" (substring merge 11)))
+    (magit-run-git-async "push" "-v" args remote (concat branch ":" merge))))
+
+(defun magit-push--gerrit-upstream-description ()
+  (let* ((branch (magit-get-current-branch))
+         (remote (magit-get "branch" branch "remote"))
+         (merge  (magit-get "branch" branch "merge")))
+         (format "push %s %s:refs/for/%s" remote branch (substring merge 11))))
+;; end added by pasiel for push to gerrit
 
 (defun magit-push--upstream-description ()
   (when-let ((branch (magit-get-current-branch)))

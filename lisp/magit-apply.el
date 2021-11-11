@@ -674,7 +674,6 @@ so causes the change to be applied to the index as well."
   (--when-let (magit-apply--get-selection)
     (pcase (list (magit-diff-type) (magit-diff-scope))
       (`(untracked ,_) (user-error "Cannot reverse untracked changes"))
-      (`(unstaged  ,_) (magit-checkout-file  "HEAD" (list (magit-section-value it))))
       (`(,_    region) (magit-reverse-region it args))
       (`(,_      hunk) (magit-reverse-hunk   it args))
       (`(,_     hunks) (magit-reverse-hunks  it args))
