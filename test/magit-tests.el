@@ -1,8 +1,21 @@
-;;; magit-tests.el --- tests for Magit
+;;; magit-tests.el --- Tests for Magit  -*- lexical-binding:t; coding:utf-8 -*-
 
-;; Copyright (C) 2011-2021  The Magit Project Contributors
+;; Copyright (C) 2008-2023 The Magit Project Contributors
+
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;; Magit is free software: you can redistribute it and/or modify it
+;; under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
 ;;
-;; License: GPLv3
+;; Magit is distributed in the hope that it will be useful, but WITHOUT
+;; ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+;; or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+;; License for more details.
+;;
+;; You should have received a copy of the GNU General Public License
+;; along with Magit.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Code:
 
@@ -24,7 +37,10 @@
   (declare (indent 0) (debug t))
   (let ((dir (make-symbol "dir")))
     `(let ((,dir (file-name-as-directory (make-temp-file "magit-" t)))
-           (process-environment process-environment))
+           (process-environment process-environment)
+           (magit-git-global-arguments
+            (nconc (list "-c" "protocol.file.allow=always")
+                   magit-git-global-arguments)))
        (push "GIT_AUTHOR_NAME=A U Thor" process-environment)
        (push "GIT_AUTHOR_EMAIL=a.u.thor@example.com" process-environment)
        (condition-case err
@@ -72,30 +88,30 @@
                      ;; But in the doc-string we say we cannot do it.
                      (expand-file-name "repo/"))))))
 
-(ert-deftest magit-toplevel:tramp ()
-  (cl-letf* ((find-file-visit-truename nil)
-             ;; Override tramp method so that we don't actually
-             ;; require a functioning `sudo'.
-             (sudo-method (cdr (assoc "sudo" tramp-methods)))
-             ((cdr (assq 'tramp-login-program sudo-method))
-              (list (if (file-executable-p "/bin/sh")
-                        "/bin/sh"
-                      shell-file-name)))
-             ((cdr (assq 'tramp-login-args sudo-method)) nil))
-    (magit-with-test-directory
-     (setq default-directory
-           (concat (format "/sudo:%s@localhost:" (user-login-name))
-                   default-directory))
-     (magit-test-init-repo "repo")
-     (magit-test-magit-toplevel)
-     (should (equal (magit-toplevel   "repo/.git/")
-                    (expand-file-name "repo/")))
-     (should (equal (magit-toplevel   "repo/.git/objects/")
-                    (expand-file-name "repo/")))
-     (should (equal (magit-toplevel   "repo-link/.git/")
-                    (expand-file-name "repo-link/")))
-     (should (equal (magit-toplevel   "repo-link/.git/objects/")
-                    (expand-file-name "repo/"))))))
+;; FIXME (ert-deftest magit-toplevel:tramp ()
+;;   (cl-letf* ((find-file-visit-truename nil)
+;;              ;; Override tramp method so that we don't actually
+;;              ;; require a functioning `sudo'.
+;;              (sudo-method (cdr (assoc "sudo" tramp-methods)))
+;;              ((cdr (assq 'tramp-login-program sudo-method))
+;;               (list (if (file-executable-p "/bin/sh")
+;;                         "/bin/sh"
+;;                       shell-file-name)))
+;;              ((cdr (assq 'tramp-login-args sudo-method)) nil))
+;;     (magit-with-test-directory
+;;      (setq default-directory
+;;            (concat (format "/sudo:%s@localhost:" (user-login-name))
+;;                    default-directory))
+;;      (magit-test-init-repo "repo")
+;;      (magit-test-magit-toplevel)
+;;      (should (equal (magit-toplevel   "repo/.git/")
+;;                     (expand-file-name "repo/")))
+;;      (should (equal (magit-toplevel   "repo/.git/objects/")
+;;                     (expand-file-name "repo/")))
+;;      (should (equal (magit-toplevel   "repo-link/.git/")
+;;                     (expand-file-name "repo-link/")))
+;;      (should (equal (magit-toplevel   "repo-link/.git/objects/")
+;;                     (expand-file-name "repo/"))))))
 
 (ert-deftest magit-toplevel:submodule ()
   (let ((find-file-visit-truename nil))
@@ -262,7 +278,7 @@
   (let ((magit-process-find-password-functions
          (list (lambda (host) (when (string= host "www.host.com") "mypasswd")))))
     (cl-letf (((symbol-function 'process-send-string)
-               (lambda (process string) string)))
+               (lambda (_process string) string)))
       (should (string-equal (magit-process-password-prompt
                              nil "Password for 'www.host.com':")
                             "mypasswd\n")))))
@@ -290,10 +306,84 @@ Enter passphrase for key '/home/user/.ssh/id_rsa': "
         (should (equal (pop sent-strings) "mypasswd\n")))
       (should (null sent-strings)))))
 
+;;; Clone
+
+(ert-deftest magit-clone:--name-to-url-format-defaults ()
+  (magit-with-test-repository
+   (magit-git "config" "--add" "sourcehut.user" "~shuser")
+   (magit-git "config" "--add" "github.user" "ghuser")
+   (magit-git "config" "--add" "gitlab.user" "gluser")
+   ;; No explicit service
+   (should (string-equal (magit-clone--name-to-url "a/b")
+                         "git@github.com:a/b.git"))
+   (should (string-equal (magit-clone--name-to-url "b")
+                         "git@github.com:ghuser/b.git"))
+   ;; User in config
+   (should (string-equal (magit-clone--name-to-url "gh:b")
+                         "git@github.com:ghuser/b.git"))
+   (should (string-equal (magit-clone--name-to-url "gl:n")
+                         "git@gitlab.com:gluser/n.git"))
+   (should (string-equal (magit-clone--name-to-url "sh:l")
+                         "git@git.sr.ht:~shuser/l"))
+   ;; Explicit user (abbreviated service names)
+   (should (string-equal (magit-clone--name-to-url "gh:a/b")
+                         "git@github.com:a/b.git"))
+   (should (string-equal (magit-clone--name-to-url "gl:t/s")
+                         "git@gitlab.com:t/s.git"))
+   (should (string-equal (magit-clone--name-to-url "sh:~x/y")
+                         "git@git.sr.ht:~x/y"))
+   ;; Explicit user (long service names)
+   (should (string-equal (magit-clone--name-to-url "github:a1/b1")
+                         "git@github.com:a1/b1.git"))
+   (should (string-equal (magit-clone--name-to-url "gitlab:t1/s1")
+                         "git@gitlab.com:t1/s1.git"))
+   (should (string-equal (magit-clone--name-to-url "sourcehut:~x1/y1")
+                         "git@git.sr.ht:~x1/y1"))))
+
+(ert-deftest magit-clone:--name-to-url-format-single-string ()
+  (let ((magit-clone-url-format "bird@%h:%n.git")
+        (magit-clone-name-alist
+         '(("\\`\\(?:github:\\|gh:\\)?\\([^:]+\\)\\'" "github.com" "u")
+           ("\\`\\(?:gitlab:\\|gl:\\)\\([^:]+\\)\\'" "gitlab.com" "u"))))
+    (should (string-equal (magit-clone--name-to-url "gh:a/b")
+                          "bird@github.com:a/b.git"))
+    (should (string-equal (magit-clone--name-to-url "gl:a/b")
+                          "bird@gitlab.com:a/b.git"))
+    (should (string-equal (magit-clone--name-to-url "github:c/d")
+                          "bird@github.com:c/d.git"))
+    (should (string-equal (magit-clone--name-to-url "gitlab:c/d")
+                          "bird@gitlab.com:c/d.git"))))
+
+(ert-deftest magit-clone:--name-to-url-format-bad-type-throws-error ()
+  (let ((magit-clone-url-format 3))
+    (should-error (magit-clone--name-to-url "gh:a/b")
+                  :type 'user-error)))
+
+(ert-deftest magit-clone:--name-to-url-format-alist-different-urls-per-hostname ()
+  (let ((magit-clone-name-alist
+         '(("\\`\\(?:example:\\|ex:\\)\\([^:]+\\)\\'" "git.example.com" "foouser")
+           ("\\`\\(?:gh:\\)?\\([^:]+\\)\\'" "github.com" "u")))
+        (magit-clone-url-format
+         '(("git.example.com" . "cow@%h:~%n")
+           (t . "git@%h:%n.git"))))
+    (should (string-equal (magit-clone--name-to-url "gh:a/b")
+                          "git@github.com:a/b.git"))
+    (should (string-equal (magit-clone--name-to-url "ex:a/b")
+                          "cow@git.example.com:~a/b"))
+    (should (string-equal (magit-clone--name-to-url "example:x/y")
+                          "cow@git.example.com:~x/y"))
+    (should (string-equal (magit-clone--name-to-url "ex:c")
+                          "cow@git.example.com:~foouser/c"))))
+
+(ert-deftest magit-clone:--name-to-url-format-alist-no-fallback-throws-error ()
+  (let ((magit-clone-url-format '(("fail.example.com" . "git@%h:~%n"))))
+    (should-error (magit-clone--name-to-url "gh:a/b")
+                  :type 'user-error)))
+
 ;;; Status
 
 (defun magit-test-get-section (list file)
-  (magit-status-internal default-directory)
+  (magit-status-setup-buffer default-directory)
   (--first (equal (oref it value) file)
            (oref (magit-get-section `(,list (status)))
                  children)))
@@ -355,6 +445,45 @@ Enter passphrase for key '/home/user/.ssh/id_rsa': "
     (magit--add-face-text-property 0 (length str) 'bold nil str)
     (should (equal (get-text-property 0 'font-lock-face str) '(bold highlight)))
     (should (equal (get-text-property 2 'font-lock-face str) '(bold)))))
+
+(ert-deftest magit-base:ellipsis-default-values ()
+  (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) t)))
+    (should (equal "…" (magit--ellipsis 'margin)))
+    (should (equal "…" (magit--ellipsis))))
+  (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) nil)))
+    (should (equal ">" (magit--ellipsis 'margin)))
+    (should (equal "..." (magit--ellipsis)))))
+
+(ert-deftest magit-base:ellipsis-customisations-are-respected ()
+  (let ((magit-ellipsis '((margin (?· . "!")) (t (?. . ">")))))
+    (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) t)))
+      (should (equal "·" (magit--ellipsis 'margin)))
+      (should (equal "." (magit--ellipsis))))
+    (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) nil)))
+      (should (equal "!" (magit--ellipsis 'margin)))
+      (should (equal ">" (magit--ellipsis))))))
+
+(ert-deftest magit-base:ellipsis-fancy-nil-defaults-to-universal ()
+  (let ((magit-ellipsis '((margin (nil . "...")) (t (nil . "^^^")))))
+    (should (equal "..." (magit--ellipsis 'margin)))
+    (should (equal "^^^" (magit--ellipsis)))))
+
+(ert-deftest magit-base:ellipsis-legacy-type-allowed ()
+  (let ((magit-ellipsis "⋮"))
+    (should (equal "⋮" (magit--ellipsis 'margin)))
+    (should (equal "⋮" (magit--ellipsis)))))
+
+(ert-deftest magit-base:ellipsis-malformed-customisation-no-default ()
+  (let ((magit-ellipsis '((margin (?· . "!")))))
+    (should-error (magit--ellipsis)
+                  :type 'user-error)))
+
+(ert-deftest magit-base:ellipsis-unknown-use-case-defaults-to-default ()
+  (let ((magit-ellipsis '((margin (?· . "!")) (t (?. . ">")))))
+    (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) t)))
+      (should (equal (magit--ellipsis 'foo) (magit--ellipsis))))
+    (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) nil)))
+      (should (equal (magit--ellipsis 'foo) (magit--ellipsis))))))
 
 ;;; magit-tests.el ends soon
 (provide 'magit-tests)

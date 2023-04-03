@@ -18,7 +18,6 @@ sharedir ?= $(PREFIX)/share
 lispdir  ?= $(sharedir)/emacs/site-lisp/magit
 infodir  ?= $(sharedir)/info
 docdir   ?= $(sharedir)/doc/magit
-statsdir ?= $(TOP)/Documentation/stats
 
 CP       ?= install -p -m 644
 MKDIR    ?= install -p -m 755 -d
@@ -26,14 +25,21 @@ RMDIR    ?= rm -rf
 TAR      ?= tar
 SED      ?= sed
 
-EMACSBIN ?= emacs
-BATCH     = $(EMACSBIN) -Q --batch $(LOAD_PATH)
+EMACS      ?= emacs
+EMACS_ARGS ?=
+BATCH       = $(EMACS) -Q --batch $(EMACS_ARGS) $(LOAD_PATH)
+
+LISP_EXTRA_TARGETS ?= check-declare
 
 INSTALL_INFO     ?= $(shell command -v ginstall-info || printf install-info)
 MAKEINFO         ?= makeinfo
 MANUAL_HTML_ARGS ?= --css-ref /assets/page.css
 
-BUILD_MAGIT_LIBGIT ?= true
+GITSTATS      ?= gitstats
+GITSTATS_DIR  ?= $(TOP)docs/stats
+GITSTATS_ARGS ?= -c style=https://magit.vc/assets/stats.css -c max_authors=999
+
+BUILD_MAGIT_LIBGIT ?= false
 
 ## Files #############################################################
 
@@ -48,9 +54,8 @@ PDFFILES  = $(addsuffix .pdf,$(filter-out git-commit,$(PACKAGES)))
 EPUBFILES = $(addsuffix .epub,$(filter-out git-commit,$(PACKAGES)))
 
 ELS  = git-commit.el
-ELS += magit-transient.el
-ELS += magit-utils.el
 ELS += magit-section.el
+ELS += magit-base.el
 ifeq "$(BUILD_MAGIT_LIBGIT)" "true"
 ELS += magit-libgit.el
 endif
@@ -58,6 +63,7 @@ ELS += magit-git.el
 ELS += magit-mode.el
 ELS += magit-margin.el
 ELS += magit-process.el
+ELS += magit-transient.el
 ELS += magit-autorevert.el
 ELS += magit-core.el
 ELS += magit-diff.el
@@ -76,7 +82,6 @@ ELS += magit-merge.el
 ELS += magit-tag.el
 ELS += magit-worktree.el
 ELS += magit-notes.el
-ELS += magit-obsolete.el
 ELS += magit-sequence.el
 ELS += magit-commit.el
 ELS += magit-remote.el
@@ -88,6 +93,7 @@ ELS += magit-patch.el
 ELS += magit-bisect.el
 ELS += magit-stash.el
 ELS += magit-blame.el
+ELS += magit-sparse-checkout.el
 ELS += magit-submodule.el
 ELS += magit-subtree.el
 ELS += magit-ediff.el
@@ -95,7 +101,6 @@ ELS += magit-gitignore.el
 ELS += magit-bundle.el
 ELS += magit-extras.el
 ELS += git-rebase.el
-ELS += magit-imenu.el
 ELS += magit-bookmark.el
 ELCS = $(ELS:.el=.elc)
 ELMS = magit.el $(filter-out $(addsuffix .el,$(PACKAGES)),$(ELS))
@@ -106,8 +111,10 @@ ELGS = magit-autoloads.el magit-version.el
 VERSION ?= $(shell \
   test -e $(TOP).git && \
   git describe --tags --abbrev=0 --always | cut -c2-)
-TIMESTAMP = 20211004
+# TODO Deal with the fact that timestamps are no longer in sync.
+TIMESTAMP = 20230101
 
+COMPAT_VERSION        = 29.1.3.4
 DASH_VERSION          = 2.19.1
 GIT_COMMIT_VERSION    = $(VERSION)
 LIBGIT_VERSION        = 0
@@ -117,14 +124,17 @@ MAGIT_SECTION_VERSION = $(VERSION)
 TRANSIENT_VERSION     = 0.3.6
 WITH_EDITOR_VERSION   = 3.0.5
 
-DASH_MELPA_SNAPSHOT          = 20210826
+COMPAT_SNAPSHOT              = 29.1.3.4
+DASH_MELPA_SNAPSHOT          = 20221013
 GIT_COMMIT_MELPA_SNAPSHOT    = $(TIMESTAMP)
 LIBGIT_MELPA_SNAPSHOT        = 0
 MAGIT_MELPA_SNAPSHOT         = $(TIMESTAMP)
 MAGIT_LIBGIT_MELPA_SNAPSHOT  = $(TIMESTAMP)
 MAGIT_SECTION_MELPA_SNAPSHOT = $(TIMESTAMP)
-TRANSIENT_MELPA_SNAPSHOT     = 20210920
-WITH_EDITOR_MELPA_SNAPSHOT   = 20211001
+TRANSIENT_MELPA_SNAPSHOT     = 20230201
+WITH_EDITOR_MELPA_SNAPSHOT   = 20230118
+
+DEV_VERSION_SUFFIX = .50-git
 
 EMACS_VERSION        = 25.1
 LIBGIT_EMACS_VERSION = 26.1
@@ -137,6 +147,8 @@ endif
 
 ## Load-Path #########################################################
 
+# Remember to also update magit-emacs-Q-command!
+
 ifndef LOAD_PATH
 
 USER_EMACS_DIR = $(HOME)/.emacs.d
@@ -148,6 +160,13 @@ ifeq "$(wildcard $(USER_EMACS_DIR))" ""
 endif
 
 ELPA_DIR ?= $(USER_EMACS_DIR)/elpa
+
+COMPAT_DIR ?= $(shell \
+  find -L $(ELPA_DIR) -maxdepth 1 -regex '.*/compat-[.0-9]*' 2> /dev/null | \
+  sort | tail -n 1)
+ifeq "$(COMPAT_DIR)" ""
+  COMPAT_DIR = $(TOP)../compat
+endif
 
 DASH_DIR ?= $(shell \
   find -L $(ELPA_DIR) -maxdepth 1 -regex '.*/dash-[.0-9]*' 2> /dev/null | \
@@ -174,14 +193,14 @@ WITH_EDITOR_DIR ?= $(shell \
   find -L $(ELPA_DIR) -maxdepth 1 -regex '.*/with-editor-[.0-9]*' 2> /dev/null | \
   sort | tail -n 1)
 ifeq "$(WITH_EDITOR_DIR)" ""
-  WITH_EDITOR_DIR = $(TOP)../with-editor
+  WITH_EDITOR_DIR = $(TOP)../with-editor/lisp
 endif
 
 MAGIT_SECTION_DIR ?= $(shell \
   find -L $(ELPA_DIR) -maxdepth 1 -regex '.*/magit-section-[.0-9]*' 2> /dev/null | \
   sort | tail -n 1)
 
-SYSTYPE := $(shell $(EMACSBIN) -Q --batch --eval "(princ system-type)")
+SYSTYPE := $(shell $(EMACS) -Q --batch --eval "(princ system-type)")
 ifeq ($(SYSTYPE), windows-nt)
   CYGPATH := $(shell cygpath --version 2>/dev/null)
 endif
@@ -194,6 +213,7 @@ LOAD_PATH = -L $(TOP)lisp
 # info node accordingly.  Also don't forget to "rgrep \b<pkg>\b".
 
 ifdef CYGPATH
+  LOAD_PATH += -L $(shell cygpath --mixed $(COMPAT_DIR))
   LOAD_PATH += -L $(shell cygpath --mixed $(DASH_DIR))
   LOAD_PATH += -L $(shell cygpath --mixed $(LIBGIT_DIR))
   LOAD_PATH += -L $(shell cygpath --mixed $(TRANSIENT_DIR))
@@ -202,6 +222,7 @@ ifdef CYGPATH
     LOAD_PATH += -L $(shell cygpath --mixed $(MAGIT_SECTION_DIR))
   endif
 else
+  LOAD_PATH += -L $(COMPAT_DIR)
   LOAD_PATH += -L $(DASH_DIR)
   LOAD_PATH += -L $(LIBGIT_DIR)
   LOAD_PATH += -L $(TRANSIENT_DIR)
@@ -214,15 +235,25 @@ endif
 endif # ifndef LOAD_PATH
 
 ifndef ORG_LOAD_PATH
-ORG_LOAD_PATH  = $(LOAD_PATH)
-ORG_LOAD_PATH += -L ../../org/lisp
-ORG_LOAD_PATH += -L ../../org-contrib/lisp
-ORG_LOAD_PATH += -L ../../ox-texinfo+
+ORG_LOAD_PATH = -L ../../org/lisp
 endif
+
+## Dependencies ######################################################
+
+# This isn't used by make, but is needed for the Compile ci workflow.
+
+DEPS  = compat
+DEPS += dash
+DEPS += transient/lisp
+DEPS += vterm
+DEPS += with-editor/lisp
 
 ## Publish ###########################################################
 
-PUBLISH_TARGETS ?= html html-dir pdf epub
+DOMAIN      ?= magit.vc
+CFRONT_DIST ?= E2LUHBKU1FBV02
+
+PUBLISH_TARGETS ?= html html-dir pdf
 
 DOCBOOK_XSL ?= /usr/share/xml/docbook/stylesheet/docbook-xsl/epub/docbook.xsl
 
